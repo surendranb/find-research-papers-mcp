@@ -82,6 +82,7 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
 
     hits: list[PaperHit] = []
     skipped: list[dict] = []
+    queried: list[str] = []
     per_source_limit = max(limit, 1)
     for name in names:
         src = SOURCES[name]
@@ -89,6 +90,7 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
             skipped.append({"source": name, "reason": "key_required",
                             "hint": src.key_hint})
             continue
+        queried.append(name)
         try:
             hits.extend(src.search(query, per_source_limit, year_from, year_to,
                                    sort, open_access_only))
@@ -97,8 +99,26 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
         except Exception as e:
             skipped.append({"source": name, "reason": "error", "detail": str(e)[:200]})
 
-    hits.sort(key=lambda h: (h.source, (h.title or "").lower()))
-    return {"hits": [h.to_dict() for h in hits[:limit]], "skipped": skipped}
+    # Round-robin across sources so one prolific source (e.g. arXiv on CS
+    # topics) cannot monopolize a small result window — cross-source discovery
+    # is the point of a multi-source search.
+    per_source = {}
+    for hit in hits:
+        per_source.setdefault(hit.source, []).append(hit)
+    interleaved = []
+    buckets = list(per_source.values())
+    while buckets:
+        nxt = []
+        for bucket in buckets:
+            if bucket:
+                interleaved.append(bucket.pop(0))
+                nxt.append(bucket)
+        buckets = nxt
+    return {
+        "hits": [h.to_dict() for h in interleaved[:limit]],
+        "skipped": skipped,
+        "sources_queried": queried,
+    }
 
 
 def get_paper(identifier: str, id_type: str = "auto",

@@ -231,3 +231,22 @@ class TestSearchAllAggregation:
                       "abstract", "doi", "url", "pdf_url", "citations_count",
                       "open_access", "type"):
             assert field in d
+
+    def test_round_robin_interleaves_sources(self, monkeypatch):
+        """A prolific source must not monopolize the result window."""
+        def two_a(query, limit, year_from, year_to, sort, oa_only):
+            return [PaperHit(source="arxiv", id=f"a{i}", title=f"A{i}", url="x")
+                    for i in range(2)]
+
+        def one_each(query, limit, year_from, year_to, sort, oa_only):
+            return [PaperHit(source="openalex", id="o1", title="O1", url="x"),
+                    PaperHit(source="crossref", id="c1", title="C1", url="x")]
+        monkeypatch.setattr(SOURCES["arxiv"], "search", two_a)
+        monkeypatch.setattr(SOURCES["openalex"], "search", one_each)
+        monkeypatch.setattr(SOURCES["crossref"], "search", one_each)
+        result = search_all("test", sources=["arxiv", "openalex", "crossref"], limit=4)
+        sources = [h["source"] for h in result["hits"]]
+        # first pass covers every source before any source repeats
+        assert sorted(sources[:3]) == ["arxiv", "crossref", "openalex"]
+        assert sources[3] == "arxiv"
+        assert result["sources_queried"] == ["arxiv", "openalex", "crossref"]
