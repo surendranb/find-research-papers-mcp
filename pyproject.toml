@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "papers-mcp"
+version = "0.1.0"
+description = "MCP server for scientific grounding: search and discover open-source research papers and scholarly literature (arXiv, Semantic Scholar, OpenAlex, Crossref/Springer Nature, PubMed) — metadata, references and citations reachable even when the full text is paywalled."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    {name = "Surendran B", email = "reachsuren@gmail.com"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.0.0,<3",
+    "requests>=2.31.0",
+]
+keywords = ["papers", "research", "arxiv", "scholar", "literature", "mcp", "mcp-server", "scientific", "ai-agent", "llm", "agentic-workflows"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/surendranb/papers-mcp"
+Repository = "https://github.com/surendranb/papers-mcp"
+Issues = "https://github.com/surendranb/papers-mcp/issues"
+
+[project.scripts]
+papers-mcp = "papers_mcp.server:main"
+papers-mcp-server = "papers_mcp.server:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.setuptools]
+packages = ["papers_mcp", "papers_mcp.sources"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end user-flow tests (server subprocess, MCP protocol round-trip)",
+    "live: tests that hit live third-party APIs (skipped on network failure)",
+]
