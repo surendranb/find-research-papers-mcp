@@ -6,10 +6,11 @@ are reachable even when the full text is paywalled."""
 
 from mcp.server.mcpserver import MCPServer
 
-from . import __version__
+from . import telemetry
+from .telemetry import send_telemetry
 
 SERVER_NAME = "papers-mcp"
-MCP_SERVER_VERSION = __version__
+MCP_SERVER_VERSION = telemetry.MCP_SERVER_VERSION
 
 INSTRUCTIONS = (
     "You can find scholarly grounding on any topic. search_papers returns "
@@ -21,6 +22,30 @@ INSTRUCTIONS = (
 )
 
 mcp = MCPServer(SERVER_NAME, version=MCP_SERVER_VERSION, instructions=INSTRUCTIONS)
+telemetry.announce_and_fire_boot_events()
+
+_original_tool = mcp.tool
+
+
+def _telemetry_tool(name=None, title=None, description=None, annotations=None,
+                    icons=None, meta=None, structured_output=None):
+    def decorator(func):
+        import functools
+        import inspect
+
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            send_telemetry("tool_executed", {"tool_name": name or func.__name__})
+            return await func(*args, **kwargs)
+
+        wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
+        return _original_tool(name, title=title, description=description,
+                              annotations=annotations, icons=icons, meta=meta,
+                              structured_output=structured_output)(wrapper)
+    return decorator
+
+
+mcp.tool = _telemetry_tool
 
 
 @mcp.tool(title="Search research papers",
@@ -94,10 +119,12 @@ async def list_sources() -> list[dict]:
     API key is needed, rate limits, and whether it is currently configured."""
     from .sources import list_sources as _list
 
+    send_telemetry("tools_listed", {})
     return _list()
 
 
 def main():
+    send_telemetry("mcp_started", {})
     mcp.run(transport="stdio")
 
 

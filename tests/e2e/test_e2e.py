@@ -5,7 +5,11 @@ over stdio (initialize -> tools/list -> tools/call). This tests the server as
 an MCP client sees it — not the Python functions directly."""
 
 import json
+import os
 import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -16,16 +20,81 @@ SERVER_CMD = [str(ROOT / ".venv/bin/python"), "-m", "papers_mcp"]
 
 pytestmark = pytest.mark.e2e
 
+OPT_OUT_VARS = ("PAPERS_MCP_TELEMETRY", "DISABLE_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY")
+
+
+class CaptureServer:
+    """Local stand-in for the Cloudflare gateway: records every telemetry
+    POST so tests can assert what actually left the server."""
+
+    def __init__(self):
+        self.payloads = []
+        self.requests = []
+        lock = threading.Lock()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):  # type: ignore[override]
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                with lock:
+                    self.server.payloads.append(json.loads(body))  # type: ignore[attr-defined]
+                    self.server.requests.append(dict(self.headers))  # type: ignore[attr-defined]
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"recorded":true}')
+
+            def log_message(self, *args):  # type: ignore[override]
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.payloads = self.payloads  # type: ignore[attr-defined]
+        self.httpd.requests = self.requests  # type: ignore[attr-defined]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self):
+        return f"http://127.0.0.1:{self.httpd.server_port}/e"
+
+    def event_names(self):
+        return [p["event"] for p in self.payloads]
+
+    def wait_for_events(self, names, timeout=25):
+        want = set(names)
+        end = time.time() + timeout
+        while time.time() < end:
+            if want <= set(self.event_names()):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def _server_env(env_extra=None, telemetry_url=None):
+    env = {k: "" for k in OPT_OUT_VARS}
+    env.update(os.environ)
+    env_extra = env_extra or {}
+    env.update(env_extra)
+    if "PAPERS_MCP_TELEMETRY" not in env_extra:
+        env.pop("PAPERS_MCP_TELEMETRY", None)
+    if telemetry_url is not None:
+        env["PAPERS_MCP_TELEMETRY_URL"] = telemetry_url
+    return env
+
 
 class MCPStdioClient:
     """Minimal JSON-RPC client that matches response IDs (pendingResolve must
     check resp.id === requestId, else responses from one call pollute another)."""
 
-    def __init__(self):
+    def __init__(self, env_extra=None, telemetry_url=None):
         self.proc = subprocess.Popen(
             SERVER_CMD,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1,
+            env=_server_env(env_extra, telemetry_url),
         )
         self._next_id = 0
 
@@ -208,3 +277,67 @@ def test_get_paper_unknown_identifier():
         }, timeout=60)
         data = parse_result(res["result"])
         assert "error" in data  # graceful structured error, not a crash
+
+
+def test_telemetry_events_flow(tmp_path):
+    """Fresh install: boot + tool events reach the gateway, PII-free (SUR-86)."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
+            c.handshake()
+            c.request("tools/list")
+            c.request("tools/call", {"name": "list_sources", "arguments": {}})
+            assert capture.wait_for_events([
+                "server_first_install", "package_download", "mcp_started",
+                "tools_listed", "tool_executed",
+            ]), f"missing events, saw: {capture.event_names()}"
+
+            blob = json.dumps(capture.payloads)
+            for payload in capture.payloads:
+                props = payload["properties"]
+                assert payload["event"] in ("server_first_install", "package_download",
+                                            "mcp_started", "tools_listed", "tool_executed")
+                assert props["mcp_server_name"] == "papers-mcp"
+                assert props.get("session_id", "").startswith("sess_")
+                assert props.get("schema_version") == 1
+            # zero PII / no local paths (SUR-86 #5, SUR-259 telemetry assertions)
+            assert str(tmp_path) not in blob, "local path leaked into telemetry"
+            assert "Users/" not in blob, "home path leaked into telemetry"
+            assert "127.0.0.1" not in blob, "gateway URL leaked into telemetry"
+            assert "reachsuren@" not in blob, "contact email leaked"
+    finally:
+        capture.close()
+
+
+def test_telemetry_opt_out(tmp_path):
+    """Opt-out env var: server boots and works, but nothing is sent."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path),
+                                       "PAPERS_MCP_TELEMETRY": "false"},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            c.request("tools/list")
+            c.request("tools/call", {"name": "list_sources", "arguments": {}})
+            time.sleep(3)
+            assert capture.payloads == [], f"expected no telemetry, got: {capture.event_names()}"
+    finally:
+        capture.close()
+
+
+def test_first_run_disclosure(tmp_path):
+    """First boot prints the telemetry disclosure before any event is sent."""
+    capture = CaptureServer()
+    try:
+        env = _server_env(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url)
+        proc = subprocess.Popen(
+            SERVER_CMD, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, env=env, text=True,
+        )
+        time.sleep(4)
+        proc.terminate()
+        err = proc.communicate(timeout=5)[1]
+        assert "papers-mcp collects anonymous usage telemetry" in err
+        assert "PAPERS_MCP_TELEMETRY=false" in err
+    finally:
+        capture.close()
