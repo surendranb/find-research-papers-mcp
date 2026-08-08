@@ -12,8 +12,8 @@ Python + MCP SDK 2.x (`mcp.server.mcpserver.MCPServer`, stdio transport). Monore
 
 ```
 papers-mcp/
-├── pyproject.toml            # name "papers-mcp", scripts "papers-mcp", "papers-mcp-server"
-├── server.json               # io.github.surendranb/papers-mcp (schema 2025-12-11)
+├── pyproject.toml            # name "find-research-papers-mcp", scripts "find-research-papers-mcp", "find-research-papers-mcp-server"
+├── server.json               # find-research-papers-mcp (schema 2025-12-11)
 ├── papers_mcp/
 │   ├── server.py             # MCPServer, tools: search_papers, get_paper, list_sources
 │   ├── sources/
@@ -71,7 +71,7 @@ Missing key → source skipped at runtime, listed in `list_sources` as "key requ
 
 ## Verification
 
-1. Native MCP protocol e2e: spawn real server (`uv run papers-mcp`) → JSON-RPC `initialize` → `tools/list` → `tools/call list_sources` → `tools/call search_papers` → `tools/call get_paper` (doi with references+citations) → assert response id matching + unified schema (id/title/url/source non-empty).
+1. Native MCP protocol e2e: spawn real server (`uv run find-research-papers-mcp`) → JSON-RPC `initialize` → `tools/list` → `tools/call list_sources` → `tools/call search_papers` → `tools/call get_paper` (doi with references+citations) → assert response id matching + unified schema (id/title/url/source non-empty).
 2. Live smoke per source (`pytest -m live`).
 3. Wire into Hermes `config.yaml` (`mcp_servers.papers_mcp`, venv python + `-m papers_mcp`, tools.include) → `hermes gateway restart` → call `mcp__papers_mcp__*` from a live session.
 4. Linear: close-out comment on SUR-85 with evidence.
