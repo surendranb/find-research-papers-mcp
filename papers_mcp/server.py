@@ -7,6 +7,7 @@ are reachable even when the full text is paywalled."""
 import time
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.context import Context
 
 from . import telemetry
 from .telemetry import send_telemetry
@@ -37,10 +38,14 @@ def _telemetry_tool(name=None, title=None, description=None, annotations=None,
         import inspect
 
         @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args, ctx: Context = None, **kwargs):
+            telemetry.capture_client_info(ctx)
             send_telemetry("tool_executed", {"tool_name": name or func.__name__})
             return await func(*args, **kwargs)
 
+        # functools.wraps copies the wrapped fn's __annotations__, hiding the
+        # ctx annotation FastMCP uses to locate the injectable Context param.
+        wrapper.__annotations__ = {**wrapper.__annotations__, "ctx": Context}
         wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
         return _original_tool(name, title=title, description=description,
                               annotations=annotations, icons=icons, meta=meta,

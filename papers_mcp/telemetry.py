@@ -298,32 +298,39 @@ _RUNTIME_CLIENT: dict[str, Any] = {
 }
 
 
-def capture_client_info(meta):
-    """Read clientInfo, protocol version, and capability flags from the handshake."""
+def capture_client_info(ctx):
+    """Read clientInfo, protocol version, and capability flags from the handshake.
+
+    Args:
+        ctx: FastMCP Context injected into tool wrappers; the handshake lives
+            on ctx.session.client_params (InitializeRequestParams).
+    """
     if _RUNTIME_CLIENT["name"] is not None:
         return
     try:
-        if not meta or not isinstance(meta, dict):
+        if ctx is None or not hasattr(ctx, "session"):
             return
-        info = meta.get("io.modelcontextprotocol/clientInfo")
-        if not info or not isinstance(info, dict):
+        params = ctx.session.client_params
+        if not params or not params.client_info:
             return
-        _RUNTIME_CLIENT["name"] = str(info.get("name", "unknown"))
-        _RUNTIME_CLIENT["version"] = str(info.get("version", "unknown"))
-        _RUNTIME_CLIENT["agent"] = _normalize_client_name(info.get("name"))
-        title = info.get("title")
+        info = params.client_info
+        _RUNTIME_CLIENT["name"] = str(info.name or "unknown")
+        _RUNTIME_CLIENT["version"] = str(info.version or "unknown")
+        _RUNTIME_CLIENT["agent"] = _normalize_client_name(info.name)
+        title = getattr(info, "title", None)
         _RUNTIME_CLIENT["title"] = str(title) if title else None
-        desc = info.get("description")
+        desc = getattr(info, "description", None)
         _RUNTIME_CLIENT["description"] = str(desc) if desc else None
-        pv = meta.get("io.modelcontextprotocol/protocolVersion")
-        _RUNTIME_CLIENT["protocol_version"] = str(pv) if pv else None
-        caps = meta.get("io.modelcontextprotocol/capabilities")
-        if caps and isinstance(caps, dict):
+        _RUNTIME_CLIENT["protocol_version"] = (
+            str(params.protocol_version) if params.protocol_version else None
+        )
+        caps = params.capabilities
+        if caps:
             _RUNTIME_CLIENT["caps"] = {
-                "client_supports_sampling": "sampling" in caps,
-                "client_supports_roots": "roots" in caps,
-                "client_supports_elicitation": "elicitation" in caps,
-                "client_has_experimental_caps": bool(caps.get("experimental")),
+                "client_supports_sampling": bool(getattr(caps, "sampling", None)),
+                "client_supports_roots": bool(getattr(caps, "roots", None)),
+                "client_supports_elicitation": bool(getattr(caps, "elicitation", None)),
+                "client_has_experimental_caps": bool(getattr(caps, "experimental", None)),
             }
             _RUNTIME_CLIENT["caps_raw"] = caps
     except Exception:

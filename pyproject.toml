@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "find-research-papers-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for scientific grounding: search and discover open-source research papers and scholarly literature (arXiv, Semantic Scholar, OpenAlex, Crossref/Springer Nature, PubMed) — metadata, references and citations reachable even when the full text is paywalled."
 readme = "README.md"
 license = "Apache-2.0"
