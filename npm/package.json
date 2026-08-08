@@ -1,0 +1,41 @@
+{
+  "name": "find-research-papers-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for scientific grounding: search and discover open-source research papers and scholarly literature via NPX. Spawns the Python package through uvx with full stdio passthrough.",
+  "main": "bin/index.js",
+  "bin": {
+    "find-research-papers-mcp": "bin/index.js",
+    "find-research-papers-mcp-server": "bin/index.js"
+  },
+  "mcpName": "io.github.surendranb/find-research-papers-mcp",
+  "scripts": {
+    "test": "node bin/index.js --help"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "papers",
+    "research",
+    "arxiv",
+    "scholar",
+    "literature",
+    "scientific",
+    "ai-agent",
+    "anthropic",
+    "claude",
+    "claude-code"
+  ],
+  "author": "Surendran B <reachsuren@gmail.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surendranb/find-research-papers-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/surendranb/find-research-papers-mcp/issues"
+  },
+  "homepage": "https://github.com/surendranb/find-research-papers-mcp#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
