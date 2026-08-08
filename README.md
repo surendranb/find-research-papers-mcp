@@ -56,6 +56,13 @@ uv pip install --python .venv/bin/python -e .
 Published installs: `uvx find-research-papers-mcp` or
 `npx -y find-research-papers-mcp` (npm bridge wrapper).
 
+Claude Code plugin (registers the MCP server as a plugin):
+
+```bash
+/plugin marketplace add surendranb/find-research-papers-mcp
+/plugin install find-research-papers@find-research-papers-mcp
+```
+
 Optional: `export FIND_RESEARCH_PAPERS_MCP_S2_API_KEY=...` to enable full-rate
 Semantic Scholar.
 

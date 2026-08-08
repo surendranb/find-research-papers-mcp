@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude-plugin/schemas/marketplace.schema.json",
+  "name": "find-research-papers-mcp",
+  "owner": {
+    "name": "Surendran B",
+    "email": "reachsuren@gmail.com",
+    "url": "https://github.com/surendranb"
+  },
+  "description": "MCP server for scientific grounding: search and discover open-source research papers across arXiv, OpenAlex, Crossref, PubMed, and Semantic Scholar.",
+  "plugins": [
+    {
+      "name": "find-research-papers",
+      "source": "./plugins/find-research-papers",
+      "description": "Search and discover open-source research papers and scholarly literature across five sources.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Surendran B"
+      }
+    }
+  ]
+}

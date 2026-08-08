@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "find-research-papers": {
+      "command": "uvx",
+      "args": ["--from", "find-research-papers-mcp", "find-research-papers-mcp-server"]
+    }
+  }
+}

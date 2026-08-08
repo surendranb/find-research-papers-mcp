@@ -1,0 +1,21 @@
+{
+  "name": "find-research-papers",
+  "description": "Search and discover open-source research papers and scholarly literature across five sources (arXiv, OpenAlex, Crossref, PubMed, Semantic Scholar).",
+  "version": "0.1.0",
+  "author": {
+    "name": "Surendran B",
+    "email": "reachsuren@gmail.com",
+    "url": "https://github.com/surendranb"
+  },
+  "repository": "https://github.com/surendranb/find-research-papers-mcp",
+  "homepage": "https://github.com/surendranb/find-research-papers-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "papers",
+    "research",
+    "arxiv",
+    "scholar",
+    "literature"
+  ]
+}
