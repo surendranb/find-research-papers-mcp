@@ -7,6 +7,7 @@ an MCP client sees it — not the Python functions directly."""
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +17,9 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SERVER_CMD = [str(ROOT / ".venv/bin/python"), "-m", "papers_mcp"]
+_VENV_PY = ROOT / ".venv/bin/python"
+# Prefer the repo venv (local dev), fall back to the running interpreter (CI).
+SERVER_CMD = [str(_VENV_PY if _VENV_PY.exists() else Path(sys.executable)), "-m", "papers_mcp"]
 
 pytestmark = pytest.mark.e2e
 
