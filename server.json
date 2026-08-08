@@ -6,6 +6,6 @@
   "command": "uv",
   "args": ["run", "--directory", "/Users/surendran/Projects/papers-mcp", "find-research-papers-mcp"],
   "env": {},
-  "tools": ["search_papers", "get_paper", "list_sources"],
+  "tools": ["search_papers", "get_paper", "get_research_method", "list_sources"],
   "transport": "stdio"
 }

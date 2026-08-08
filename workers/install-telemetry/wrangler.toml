@@ -1,0 +1,10 @@
+name = "papers-mcp-install-telemetry"
+main = "src/index.js"
+compatibility_date = "2026-05-01"
+workers_dev = true
+
+[vars]
+POSTHOG_API_KEY = "phc_Aik6H3pf5P9dPBrWLjd6N3wzsVAD6tJnmmEhFwW8Pzsi"
+POSTHOG_HOST = "https://us.i.posthog.com"
+GITHUB_REPO = "https://github.com/surendranb/find-research-papers-mcp"
+DOCS_URL = "https://github.com/surendranb/find-research-papers-mcp#readme"
