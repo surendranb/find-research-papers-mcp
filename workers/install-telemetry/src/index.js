@@ -211,6 +211,19 @@ export default {
       })
     );
 
+    // 1-line installer script — served from the repo (single source of truth).
+    // Must precede the landing page route: curl never wants HTML.
+    if (isCurl || pathname.endsWith(".sh") || pathname === "/install") {
+      const src = bucketSrc(url.searchParams.get("src")) || "installer";
+      const script = await fetchInstallerScript(src);
+      return new Response(script, {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "public, max-age=60"
+        }
+      });
+    }
+
     // Landing page: setup guide (happy-hues warm cream theme).
     if (pathname === "/" || pathname === "/setup" || pathname === "/guide") {
       return new Response(getSetupHtmlPage(), {
@@ -218,19 +231,33 @@ export default {
       });
     }
 
-    // 1-line installer script.
-    if (isCurl || pathname.endsWith(".sh") || pathname === "/install") {
-      return new Response(getInstallerScript(url.hostname, bucketSrc(url.searchParams.get("src"))), {
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": "no-cache"
-        }
-      });
-    }
-
     return Response.redirect(env.DOCS_URL, 302);
   }
 };
+
+// Serve install.sh from the repo, injecting the discovery source. Falls back
+// to a minimal manual-install script if GitHub is unreachable.
+async function fetchInstallerScript(src) {
+  const upstream = "https://raw.githubusercontent.com/surendranb/find-research-papers-mcp/main/install.sh";
+  try {
+    const res = await fetch(upstream, { cf: { cacheTtl: 60, cacheEverything: true } });
+    if (!res.ok) throw new Error(`upstream ${res.status}`);
+    const script = await res.text();
+    return script.replace(
+      'SRC="${FIND_RESEARCH_PAPERS_MCP_SOURCE:-installer}"',
+      `SRC="${src}"`,
+    );
+  } catch (e) {
+    return `#!/usr/bin/env bash
+# find-research-papers-mcp — manual install (GitHub unreachable, fallback)
+set -e
+if command -v uvx >/dev/null 2>&1; then echo "Run: uvx find-research-papers-mcp"
+elif command -v npx >/dev/null 2>&1; then echo "Run: npx -y find-research-papers-mcp"
+else echo "Install uv (https://docs.astral.sh/uv/) or node, then retry"; fi
+echo "Config: add to your MCP client, command: uvx --from find-research-papers-mcp find-research-papers-mcp-server"
+`;
+  }
+}
 
 function parseUserAgent(ua) {
   const lower = ua.toLowerCase();
@@ -262,7 +289,7 @@ function getSetupHtmlPage() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Find Research Papers MCP — free music search for AI agents</title>
+  <title>Find Research Papers MCP — scholarly search for AI agents</title>
   <style>
     :root { --bg: #fef6e4; --card: #ffffff; --text: #001858; --accent: #f582ae; --teal: #8bd3dd; --green: #001858; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 2rem 1rem; }
@@ -280,24 +307,23 @@ function getSetupHtmlPage() {
 <body>
   <div class="container">
     <h1>Find Research Papers MCP</h1>
-    <p>Gives AI agents a searchable catalog of the most extensive list of free, open-source, royalty-free music sources — Internet Archive, Wikimedia Commons, Jamendo, Freesound, and the full Incompetech catalog. Every result carries its license and a ready-to-paste attribution.</p>
+    <p>Gives AI agents scientific grounding: one query across arXiv, OpenAlex, Crossref, PubMed, and Semantic Scholar — with references and citations even for paywalled journals.</p>
 
     <div class="card">
       <h2><span class="step-num">1</span> Install</h2>
-      <pre>curl -fsSL "https://papers-mcp-install-telemetry.reachsuren.workers.dev/?src=setup" | bash</pre>
-      <p>Or manually: <code>uvx find-research-papers-mcp</code> · <code>npx find-research-papers-mcp</code> · <code>pip install find-research-papers-mcp</code></p>
+      <pre>curl -fsSL "https://papers-mcp-install-telemetry.reachsuren.workers.dev/install?src=setup" | bash</pre>
+      <p>Or manually: <code>uvx find-research-papers-mcp</code> · <code>npx -y find-research-papers-mcp</code></p>
     </div>
 
     <div class="card">
       <h2><span class="step-num">2</span> Add to your agent</h2>
       <p><a class="btn" href="/go/cursor">Cursor 1-click</a></p>
-      <p>Claude Code: <code>claude mcp add --transport stdio find-research-papers-mcp -- uvx --from find-research-papers-mcp find-research-papers-mcp-server</code></p>
-      <p>Gemini: <code>gemini config add find-research-papers-mcp "uvx --from find-research-papers-mcp find-research-papers-mcp-server"</code></p>
+      <p>Claude Code: <code>/plugin marketplace add surendranb/find-research-papers-mcp</code>, then <code>/plugin install find-research-papers@find-research-papers-mcp</code></p>
     </div>
 
     <div class="card">
       <h2><span class="step-num">3</span> Try it</h2>
-      <p>"Find a royalty-free ambient track, tell me its license and attribution."</p>
+      <p>"Find recent papers on retrieval augmented generation with citation counts."</p>
     </div>
 
     <p style="text-align: center; color: #001858; margin-top: 2rem;">
@@ -308,110 +334,6 @@ function getSetupHtmlPage() {
 </html>`;
 }
 
-function getInstallerScript(hostname, src) {
-  const host = hostname || "papers-mcp-install-telemetry.reachsuren.workers.dev";
-  const srcValue = src || "installer";
-  return `#!/usr/bin/env bash
-# Find Research Papers MCP Universal AI Installer
-FIND_RESEARCH_PAPERS_MCP_SRC="${srcValue}"
-
-set -e
-
-GREEN='\\033[0;32m'
-YELLOW='\\033[1;33m'
-RED='\\033[0;31m'
-NC='\\033[0m'
-
-ANON_ID="inst_$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo \$\$RANDOM)"
-
-# Persist identity + source BEFORE the server's first run, so the server's
-# events (mcp_started, tool_executed) join this install in the funnel.
-mkdir -p "$HOME/.find_research_papers_mcp" 2>/dev/null || true
-if [ -f "$HOME/.find_research_papers_mcp/installation_id" ]; then
-  ANON_ID="$(cat "$HOME/.find_research_papers_mcp/installation_id")"
-else
-  echo "$ANON_ID" > "$HOME/.find_research_papers_mcp/installation_id" 2>/dev/null || true
-fi
-echo "$FIND_RESEARCH_PAPERS_MCP_SRC" > "$HOME/.find_research_papers_mcp/source" 2>/dev/null || true
-
-handle_error() {
-  local exit_code=$?
-  echo -e "\${RED}Installation failed (exit code: $exit_code)\${NC}"
-  echo -e "\${YELLOW}Ensure you have python3: https://www.python.org/downloads/\${NC}"
-  curl -s -m 3 -X POST "https://${host}/telemetry" -H "Content-Type: application/json" -d "{\\"anonymous_id\\":\\"\$ANON_ID\\",\\"src\\":\\"$FIND_RESEARCH_PAPERS_MCP_SRC\\",\\"install_outcome\\":\\"error\\",\\"error_code\\":$exit_code}" > /dev/null 2>&1 || true
-  exit $exit_code
-}
-trap handle_error ERR
-
-if ! command -v uv > /dev/null 2>&1; then
-  echo -e "\${GREEN}Installing uv...\${NC}"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-fi
-
-echo -e "\${GREEN}Installing find-research-papers-mcp...\${NC}"
-uv tool install --force find-research-papers-mcp
-uvx find-research-papers-mcp --version > /dev/null 2>&1 || true
-
-# Wire into whatever harnesses are present — no prompts, nothing to remember.
-WIRED=""
-
-wire_json() {
-  python3 - "$1" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-os.makedirs(os.path.dirname(path), exist_ok=True)
-data = {}
-try:
-    with open(path) as f:
-        data = json.load(f)
-except Exception:
-    pass
-if not isinstance(data, dict):
-    data = {}
-servers = data.setdefault("mcpServers", {})
-if not isinstance(servers, dict):
-    servers = {}
-    data["mcpServers"] = servers
-if "find-research-papers-mcp" in servers:
-    sys.exit(0)
-servers["find-research-papers-mcp"] = {"command": "uvx", "args": ["--from", "find-research-papers-mcp", "find-research-papers-mcp-server"]}
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-print("ok")
-PY
-}
-
-if command -v claude > /dev/null 2>&1; then
-  claude mcp add --transport stdio find-research-papers-mcp -- uvx --from find-research-papers-mcp find-research-papers-mcp-server > /dev/null 2>&1 && WIRED="$WIRED claude-code"
-fi
-
-if command -v gemini > /dev/null 2>&1; then
-  gemini config add find-research-papers-mcp "uvx --from find-research-papers-mcp find-research-papers-mcp-server" > /dev/null 2>&1 && WIRED="$WIRED gemini-cli"
-fi
-
-if [ -d "$HOME/.cursor" ]; then
-  wire_json "$HOME/.cursor/mcp.json" > /dev/null 2>&1 && WIRED="$WIRED cursor"
-fi
-
-if [ -d "$HOME/Library/Application Support/Claude" ]; then
-  wire_json "$HOME/Library/Application Support/Claude/claude_desktop_config.json" > /dev/null 2>&1 && WIRED="$WIRED claude-desktop"
-fi
-
-echo -e "\${GREEN}Done.\${NC}"
-if [ -n "$WIRED" ]; then
-  echo -e "Wired into:\${WIRED}"
-else
-  echo "No supported agent found. Add manually:"
-  echo "Claude Code: claude mcp add --transport stdio find-research-papers-mcp -- uvx --from find-research-papers-mcp find-research-papers-mcp-server"
-  echo "Cursor: open MCP settings and add: uvx --from find-research-papers-mcp find-research-papers-mcp-server"
-  echo "Gemini: gemini config add find-research-papers-mcp \\"uvx --from find-research-papers-mcp find-research-papers-mcp-server\\""
-fi
-echo "Restart your agent and ask: \\"find a royalty-free ambient track, tell me its license and attribution.\\""
-
-curl -s -m 3 -X POST "https://${host}/telemetry" -H "Content-Type: application/json" -d "{\\"anonymous_id\\":\\"\$ANON_ID\\",\\"src\\":\\"$FIND_RESEARCH_PAPERS_MCP_SRC\\",\\"install_outcome\\":\\"success\\",\\"execution_mode\\":\\"curl_bash\\",\\"os_name\\":\\"\$(uname -s)\\",\\"arch\\":\\"\$(uname -m)\\",\\"shell_type\\":\\"\${SHELL##*/}\\",\\"python_version\\":\\"\$(python3 --version 2>/dev/null | awk '{print \$2}' || echo none)\\",\\"has_uv\\":true,\\"has_brew\\":\$(command -v brew > /dev/null 2>&1 && echo true || echo false),\\"wired_clients\\":\\"\$WIRED\\"}" > /dev/null 2>&1 || true
-`;
-}
 
 async function sendPostHogEvent(env, payload) {
   try {
