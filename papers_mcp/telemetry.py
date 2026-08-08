@@ -20,21 +20,21 @@ from pathlib import Path
 from typing import Any
 
 GATEWAY_URL = os.getenv(
-    "PAPERS_MCP_TELEMETRY_URL",
+    "FIND_RESEARCH_PAPERS_MCP_TELEMETRY_URL",
     "https://papers-mcp-install-telemetry.reachsuren.workers.dev/e",
 )
 SCHEMA_VERSION = 1
 
 try:
     import importlib.metadata
-    MCP_SERVER_VERSION = importlib.metadata.version("papers-mcp")
+    MCP_SERVER_VERSION = importlib.metadata.version("find-research-papers-mcp")
 except Exception:
     MCP_SERVER_VERSION = "unknown"
 
 
-# Any disable flag wins over PAPERS_MCP_TELEMETRY=true.
+# Any disable flag wins over FIND_RESEARCH_PAPERS_MCP_TELEMETRY=true.
 def _telemetry_disabled() -> bool:
-    if os.getenv("PAPERS_MCP_TELEMETRY", "true").lower() in ("false", "0", "off"):
+    if os.getenv("FIND_RESEARCH_PAPERS_MCP_TELEMETRY", "true").lower() in ("false", "0", "off"):
         return True
     for var in ("DISABLE_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY"):
         if os.getenv(var, "").lower() in ("1", "true", "yes", "on"):
@@ -45,14 +45,14 @@ def _telemetry_disabled() -> bool:
 TELEMETRY_DISABLED = _telemetry_disabled()
 
 # Set only by our own CI/dev runs, to tag them traffic_class=internal.
-INTERNAL_RUN = os.getenv("PAPERS_MCP_INTERNAL", "").lower() in ("1", "true", "yes")
+INTERNAL_RUN = os.getenv("FIND_RESEARCH_PAPERS_MCP_INTERNAL", "").lower() in ("1", "true", "yes")
 
 
 def _init_anonymous_identity():
-    """Random installation UUID in ~/.papers_mcp/; created on first run, reset
+    """Random installation UUID in ~/.find_research_papers_mcp/; created on first run, reset
     by deleting the folder. Returns (installation_id, is_first_install)."""
     try:
-        config_dir = Path.home() / ".papers_mcp"
+        config_dir = Path.home() / ".find_research_papers_mcp"
         config_dir.mkdir(parents=True, exist_ok=True)
 
         id_file = config_dir / "installation_id"
@@ -78,7 +78,7 @@ CPU_ARCH = platform.machine()
 TIMEZONE_OFFSET = -time.timezone if (time.localtime().tm_isdst == 0) else -time.altzone
 
 
-# PAPERS_MCP_SOURCE, set in install snippets; raw value + low-cardinality bucket.
+# FIND_RESEARCH_PAPERS_MCP_SOURCE, set in install snippets; raw value + low-cardinality bucket.
 _KNOWN_SOURCES = {
     "readme", "glama", "mcpso", "pulsemcp", "papersmcp", "setup",
     "cursor_button", "vscode_button", "installer",
@@ -86,12 +86,12 @@ _KNOWN_SOURCES = {
 
 
 def _install_source():
-    raw = (os.getenv("PAPERS_MCP_SOURCE") or "").strip().lower()
+    raw = (os.getenv("FIND_RESEARCH_PAPERS_MCP_SOURCE") or "").strip().lower()
     if not raw:
-        # install snippets write ~/.papers_mcp/source (env can't survive agent
+        # install snippets write ~/.find_research_papers_mcp/source (env can't survive agent
         # launches); fall back to it so server events carry the bucket.
         try:
-            source_file = Path.home() / ".papers_mcp" / "source"
+            source_file = Path.home() / ".find_research_papers_mcp" / "source"
             if source_file.exists():
                 raw = source_file.read_text(encoding="utf-8").strip().lower()
         except Exception:
@@ -360,7 +360,7 @@ def send_telemetry(event: str, properties: dict[str, Any] | None = None):
         try:
             props = {
                 "schema_version": SCHEMA_VERSION,
-                "mcp_server_name": "papers-mcp",
+                "mcp_server_name": "find-research-papers-mcp",
                 "$os": platform.system(),
                 "python_version": platform.python_version(),
                 "mcp_server_version": MCP_SERVER_VERSION,
@@ -405,7 +405,7 @@ def send_telemetry(event: str, properties: dict[str, Any] | None = None):
                 headers={
                     "Content-Type": "application/json",
                     # Product UA: default library UAs are rejected at the edge
-                    "User-Agent": f"papers-mcp/{MCP_SERVER_VERSION}",
+                    "User-Agent": f"find-research-papers-mcp/{MCP_SERVER_VERSION}",
                 },
             )
             urllib.request.urlopen(req, timeout=3)
@@ -422,7 +422,7 @@ def send_telemetry(event: str, properties: dict[str, Any] | None = None):
 def _track_version_change():
     """Emit package_download once per version (PyPI has no install hook)."""
     try:
-        version_file = Path.home() / ".papers_mcp" / "last_run_version"
+        version_file = Path.home() / ".find_research_papers_mcp" / "last_run_version"
         previous = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else None
         if previous == MCP_SERVER_VERSION:
             return
@@ -442,9 +442,9 @@ def announce_and_fire_boot_events():
         return
     if IS_FIRST_INSTALL:
         print(
-            "papers-mcp collects anonymous usage telemetry (no PII, no queries, "
+            "find-research-papers-mcp collects anonymous usage telemetry (no PII, no queries, "
             "no paths — see 'Telemetry & Privacy' in the README). "
-            "Opt out any time with PAPERS_MCP_TELEMETRY=false or DO_NOT_TRACK=1.",
+            "Opt out any time with FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false or DO_NOT_TRACK=1.",
             file=sys.stderr,
         )
         send_telemetry("server_first_install", {"first_install_version": MCP_SERVER_VERSION})

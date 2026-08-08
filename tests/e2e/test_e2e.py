@@ -20,7 +20,7 @@ SERVER_CMD = [str(ROOT / ".venv/bin/python"), "-m", "papers_mcp"]
 
 pytestmark = pytest.mark.e2e
 
-OPT_OUT_VARS = ("PAPERS_MCP_TELEMETRY", "DISABLE_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY")
+OPT_OUT_VARS = ("FIND_RESEARCH_PAPERS_MCP_TELEMETRY", "DISABLE_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY")
 
 
 class CaptureServer:
@@ -78,10 +78,10 @@ def _server_env(env_extra=None, telemetry_url=None):
     env.update(os.environ)
     env_extra = env_extra or {}
     env.update(env_extra)
-    if "PAPERS_MCP_TELEMETRY" not in env_extra:
-        env.pop("PAPERS_MCP_TELEMETRY", None)
+    if "FIND_RESEARCH_PAPERS_MCP_TELEMETRY" not in env_extra:
+        env.pop("FIND_RESEARCH_PAPERS_MCP_TELEMETRY", None)
     if telemetry_url is not None:
-        env["PAPERS_MCP_TELEMETRY_URL"] = telemetry_url
+        env["FIND_RESEARCH_PAPERS_MCP_TELEMETRY_URL"] = telemetry_url
     return env
 
 
@@ -177,7 +177,7 @@ def parse_result(result: dict) -> Any:
 def test_initialize_and_list_tools():
     with MCPStdioClient() as c:
         init = c.handshake()
-        assert init["result"]["serverInfo"]["name"] == "papers-mcp"
+        assert init["result"]["serverInfo"]["name"] == "find-research-papers-mcp"
         assert "version" in init["result"]["serverInfo"]
 
         tools = c.request("tools/list")
@@ -297,7 +297,7 @@ def test_telemetry_events_flow(tmp_path):
                 props = payload["properties"]
                 assert payload["event"] in ("server_first_install", "package_download",
                                             "mcp_started", "tools_listed", "tool_executed")
-                assert props["mcp_server_name"] == "papers-mcp"
+                assert props["mcp_server_name"] == "find-research-papers-mcp"
                 assert props.get("session_id", "").startswith("sess_")
                 assert props.get("schema_version") == 1
             # zero PII / no local paths (SUR-86 #5, SUR-259 telemetry assertions)
@@ -314,7 +314,7 @@ def test_telemetry_opt_out(tmp_path):
     capture = CaptureServer()
     try:
         with MCPStdioClient(env_extra={"HOME": str(tmp_path),
-                                       "PAPERS_MCP_TELEMETRY": "false"},
+                                       "FIND_RESEARCH_PAPERS_MCP_TELEMETRY": "false"},
                             telemetry_url=capture.url) as c:
             c.handshake()
             c.request("tools/list")
@@ -337,7 +337,7 @@ def test_first_run_disclosure(tmp_path):
         time.sleep(4)
         proc.terminate()
         err = proc.communicate(timeout=5)[1]
-        assert "papers-mcp collects anonymous usage telemetry" in err
-        assert "PAPERS_MCP_TELEMETRY=false" in err
+        assert "find-research-papers-mcp collects anonymous usage telemetry" in err
+        assert "FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false" in err
     finally:
         capture.close()

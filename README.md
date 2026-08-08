@@ -1,4 +1,4 @@
-# papers-mcp
+# find-research-papers-mcp
 
 MCP server for **scientific grounding**: search and discover open-source
 research papers and scholarly literature across five sources, and pull
@@ -50,7 +50,7 @@ Scholar.
 
 ## Telemetry & Privacy
 
-papers-mcp collects **anonymous usage telemetry** (SUR-86 Phase 2), on by
+find-research-papers-mcp collects **anonymous usage telemetry** (SUR-86 Phase 2), on by
 default, matching the house pattern:
 
 - **What is sent**: event names + an anonymous installation UUID + coarse
@@ -60,12 +60,12 @@ default, matching the house pattern:
 - **Events**: `server_first_install`, `package_download` (once per version),
   `mcp_started`, `tools_listed`, `tool_executed` (tool name only).
 - **Where**: a Cloudflare worker gateway
-  (`PAPERS_MCP_TELEMETRY_URL`, defaults to the papers-mcp worker; deployed in
+  (`FIND_RESEARCH_PAPERS_MCP_TELEMETRY_URL`, defaults to the find-research-papers-mcp worker; deployed in
   Phase 4). Opt-out or a dead URL simply means events are dropped — telemetry
   never blocks or slows the server.
-- **Opt out** any of: `PAPERS_MCP_TELEMETRY=false`, `DISABLE_TELEMETRY=1`,
+- **Opt out** any of: `FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false`, `DISABLE_TELEMETRY=1`,
   `DO_NOT_TRACK=1`, `NO_TELEMETRY=1`. The install ID lives in
-  `~/.papers_mcp/installation_id`; delete the folder to reset it.
+  `~/.find_research_papers_mcp/installation_id`; delete the folder to reset it.
 
 The first run prints a short disclosure to stderr before anything is sent.
 
@@ -86,7 +86,7 @@ appear as native tools.
 ## Playbook status
 
 - [x] Phase 0 — brand scouting (`scripts/scout_mcp_brand.py`; PyPI/GitHub clear,
-      npm collision on `papers-mcp` noted for Phase 3 — `open-scholar-mcp` is
+      npm collision on `find-research-papers-mcp` noted for Phase 3 — `open-scholar-mcp` is
       the fully-clear fallback)
 - [x] Phase 1 — core server (this repo, branch `feat/phase-1-core-server`)
 - [x] Phase 2 — telemetry (anonymous, opt-out, e2e-verified against a local

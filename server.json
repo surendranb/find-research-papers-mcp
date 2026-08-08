@@ -1,10 +1,10 @@
 {
-  "name": "papers-mcp",
+  "name": "find-research-papers-mcp",
   "version": "0.1.0",
   "description": "Search & discover scholarly literature: arXiv, Semantic Scholar, OpenAlex, Crossref, PubMed. Pull references/citations from paywalled journals via public metadata.",
   "type": "stdio",
   "command": "uv",
-  "args": ["run", "--directory", "/Users/surendran/Projects/papers-mcp", "papers-mcp"],
+  "args": ["run", "--directory", "/Users/surendran/Projects/papers-mcp", "find-research-papers-mcp"],
   "env": {},
   "tools": ["search_papers", "get_paper", "list_sources"],
   "transport": "stdio"

@@ -9,7 +9,7 @@ from mcp.server.mcpserver import MCPServer
 from . import telemetry
 from .telemetry import send_telemetry
 
-SERVER_NAME = "papers-mcp"
+SERVER_NAME = "find-research-papers-mcp"
 MCP_SERVER_VERSION = telemetry.MCP_SERVER_VERSION
 
 INSTRUCTIONS = (

@@ -9,7 +9,7 @@ launch: PyPI (pip/uv install), npm (npx bridge), GitHub (repo), and the
 *.mcp.dev-style domain. Exit code 0 if any candidate is free on all four.
 
 Example:
-    python3 scripts/scout_mcp_brand.py papers-mcp scholarly-mcp open-scholar-mcp
+    python3 scripts/scout_mcp_brand.py find-research-papers-mcp scholarly-mcp open-scholar-mcp
 """
 
 import json
@@ -27,7 +27,7 @@ CHECKS = [
 
 def _probe(url: str) -> int:
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "papers-mcp-scout/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "find-research-papers-mcp-scout/0.1"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status
     except urllib.error.HTTPError as e:
@@ -47,7 +47,7 @@ def scout(name: str) -> dict:
             if status == 200:
                 try:
                     with urllib.request.urlopen(urllib.request.Request(
-                            url, headers={"User-Agent": "papers-mcp-scout/0.1"}), timeout=10) as r:
+                            url, headers={"User-Agent": "find-research-papers-mcp-scout/0.1"}), timeout=10) as r:
                         data = json.load(r)
                     taken = any(item["full_name"].endswith(f"/{name}")
                                 for item in data.get("items", []))
