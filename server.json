@@ -1,11 +1,30 @@
 {
-  "name": "find-research-papers-mcp",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.surendranb/find-research-papers-mcp",
+  "title": "Find Research Papers",
+  "description": "Search open-source research papers across arXiv, OpenAlex, Crossref, PubMed, Semantic Scholar.",
+  "repository": {
+    "url": "https://github.com/surendranb/find-research-papers-mcp",
+    "source": "github"
+  },
   "version": "0.1.0",
-  "description": "Search & discover scholarly literature: arXiv, Semantic Scholar, OpenAlex, Crossref, PubMed. Pull references/citations from paywalled journals via public metadata.",
-  "type": "stdio",
-  "command": "uv",
-  "args": ["run", "--directory", "/Users/surendran/Projects/papers-mcp", "find-research-papers-mcp"],
-  "env": {},
-  "tools": ["search_papers", "get_paper", "get_research_method", "list_sources"],
-  "transport": "stdio"
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "find-research-papers-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY",
+          "description": "Semantic Scholar API key. Without it, the shared rate pool may 429 (source is skipped, never a crash).",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
 }
