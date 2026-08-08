@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict, field
 # Descriptive UA: arXiv/OpenAlex/Crossref and some peers reject default
 # library UAs (403/empty responses).
 DEFAULT_HEADERS = {
-    "User-Agent": "papers-mcp/0.1.0 (MCP server; contact: reachsuren@gmail.com)"
+    "User-Agent": "find-research-papers-mcp/0.1.0 (MCP server; contact: reachsuren@gmail.com)"
 }
 
 # Polite-pool contact for APIs that reward it (OpenAlex).
