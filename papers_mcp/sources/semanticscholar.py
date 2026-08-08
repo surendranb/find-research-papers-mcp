@@ -2,7 +2,7 @@
 
 """Semantic Scholar source ("open scholar") — graph/v1 API.
 
-Free key optional (RESEARCH_MCP_S2_API_KEY). Without a key the shared pool
+Free key optional (FIND_RESEARCH_PAPERS_MCP_S2_API_KEY). Without a key the shared pool
 429s under load, so this adapter enforces a polite inter-request interval,
 retries 429s with backoff, and raises UnavailableError (-> 'skipped' in
 search results) when the pool is exhausted.
@@ -23,7 +23,7 @@ API_URL = "https://api.semanticscholar.org/graph/v1"
 _FIELDS = ("paperId,title,abstract,year,venue,citationCount,externalIds,"
            "openAccessPdf,url,authors,publicationTypes")
 
-_KEY = os.getenv("RESEARCH_MCP_S2_API_KEY", "").strip()
+_KEY = os.getenv("FIND_RESEARCH_PAPERS_MCP_S2_API_KEY", "").strip()
 
 # Polite pacing: with key ~1 req/3s is safe; without key the shared pool wants
 # ~1 req/s. We stay conservative.
@@ -44,7 +44,7 @@ class SemanticScholarSource(Source):
     description = "AI-built literature index with citations/references graph + TLDRs"
     coverage = "~220M papers across all disciplines (the 'open scholar')"
     requires_key = bool(not _KEY)
-    key_hint = "RESEARCH_MCP_S2_API_KEY"
+    key_hint = "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY"
     rate_limit = "1 req/s shared pool (no key); 100 req/5min (free key)"
 
     def configured(self) -> bool:
