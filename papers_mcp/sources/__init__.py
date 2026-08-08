@@ -3,8 +3,12 @@
 """Source registry: everything search_papers / get_paper can query."""
 
 import re
+from datetime import datetime, timezone
+from functools import lru_cache
 
-from .base import PaperHit, Source, UnconfiguredError
+import requests
+
+from .base import DEFAULT_HEADERS, PaperHit, Source, UnconfiguredError
 from .arxiv import ArxivSource
 from .crossref import CrossrefSource
 from .openalex import OpenAlexSource
@@ -69,6 +73,61 @@ def list_sources() -> list[dict]:
     return [s.status() for s in SOURCES.values()]
 
 
+@lru_cache(maxsize=512)
+def _head_resolves(url: str) -> bool | None:
+    """Liveness probe: does the landing page answer 2xx/3xx? True/False when
+    the target answered, None when it was unreachable or blocks HEAD (so we
+    never report a paper as dead on a network error)."""
+    try:
+        resp = requests.head(url, headers=DEFAULT_HEADERS, timeout=8,
+                             allow_redirects=True)
+        if resp.status_code in (404, 410):
+            return False
+        if 200 <= resp.status_code < 500:
+            return True
+        return None
+    except Exception:
+        return None
+
+
+def verify_paper(paper: PaperHit) -> dict:
+    """3-layer verification for a resolved paper: liveness (landing page
+    answers), integrity (OpenAlex retraction flag when the owner source does
+    not track it). Never hard-fails a paper — resolves=None means 'unknown'."""
+    url = None
+    if paper.doi:
+        url = f"https://doi.org/{paper.doi}"
+    elif paper.source == "arxiv" and paper.id:
+        url = f"https://arxiv.org/abs/{paper.id}"
+    elif paper.source == "pubmed" and paper.id:
+        url = f"https://pubmed.ncbi.nlm.nih.gov/{paper.id}"
+
+    resolves, error = None, None
+    if url:
+        resolves = _head_resolves(url)
+        if resolves is None:
+            error = "landing page did not answer HEAD (offline or bot-blocked); status unknown"
+
+    retracted = paper.retracted
+    if retracted is None and paper.doi:
+        try:
+            work = SOURCES["openalex"]._resolve_work(paper.doi, "doi")
+            retracted = bool(work.get("is_retracted")) if work else None
+        except Exception:
+            pass
+    if paper.retracted is None and retracted is not None:
+        paper.retracted = retracted
+
+    verification = {
+        "resolves": resolves,
+        "retracted": retracted,
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if error:
+        verification["error"] = error
+    return verification
+
+
 def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
                year_from: int | None = None, year_to: int | None = None,
                sort: str = "relevance", open_access_only: bool = False) -> dict:
@@ -123,12 +182,17 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
 
 def get_paper(identifier: str, id_type: str = "auto",
               include_references: bool = True,
-              include_citations: bool = True) -> dict:
+              include_citations: bool = True,
+              verify: bool = True) -> dict:
     """Resolve one paper + its references/citations across sources.
 
     References/citations come from the owning source when available (Crossref
     for DOIs, OpenAlex/S2 for their ids); citations additionally fall back to
     OpenAlex so arXiv/DOI/PMID identifiers still get a citing-works list.
+
+    verify=True (default) adds a verification block: liveness HEAD-check of
+    the landing page plus OpenAlex retraction flag when the owner does not
+    track it. A dead/unknown target never fails the paper — it is reported.
     """
     resolved_type = guess_id_type(identifier) if id_type == "auto" else id_type
     if resolved_type not in ID_TYPE_SOURCE:
@@ -173,10 +237,14 @@ def get_paper(identifier: str, id_type: str = "auto",
         notes.append("citing works not available from this source (OpenAlex fallback "
                      "applies when the work is indexed there)")
 
-    return {
+    verification = verify_paper(paper) if verify else None
+    response = {
         "paper": paper.to_dict(),
         "references": [r.to_dict() for r in references],
         "citations": [c.to_dict() for c in citations],
         "id_type": resolved_type,
         "notes": notes,
     }
+    if verification is not None:
+        response["verification"] = verification
+    return response

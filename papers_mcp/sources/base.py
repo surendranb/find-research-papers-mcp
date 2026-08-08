@@ -44,6 +44,7 @@ class PaperHit:
     pdf_url: str | None = None  # open-access PDF when available
     citations_count: int | None = None
     open_access: bool | None = None
+    retracted: bool | None = None  # known-retracted flag; None when the source doesn't track it
     type: str = "paper"  # paper, preprint, review, journal-article, ...
     extra: dict = field(default_factory=dict)
 

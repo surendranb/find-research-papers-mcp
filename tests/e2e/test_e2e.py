@@ -182,7 +182,7 @@ def test_initialize_and_list_tools():
 
         tools = c.request("tools/list")
         names = [t["name"] for t in tools["result"]["tools"]]
-        assert names == ["search_papers", "get_paper", "list_sources"]
+        assert names == ["search_papers", "get_paper", "get_research_method", "list_sources"]
 
 
 def test_list_sources_schema():
@@ -198,6 +198,20 @@ def test_list_sources_schema():
                 assert field in s, f"missing {field} in {s}"
         names = {s["name"] for s in sources}
         assert names == {"arxiv", "openalex", "crossref", "semanticscholar", "pubmed"}
+
+
+def test_get_research_method_schema():
+    with MCPStdioClient() as c:
+        c.handshake()
+        res = c.request("tools/call", {"name": "get_research_method",
+                                       "arguments": {}})
+        assert "error" not in res
+        method = parse_result(res["result"])["method"]
+        for field in ("tiers", "rules", "quirks", "verify_steps",
+                      "retraction_note"):
+            assert field in method, f"missing {field}"
+        assert isinstance(method["tiers"], list) and method["tiers"]
+        assert "verify_steps" in method and isinstance(method["verify_steps"], list)
 
 
 def test_search_papers_aggregates_real_hits():
@@ -289,14 +303,15 @@ def test_telemetry_events_flow(tmp_path):
             c.request("tools/call", {"name": "list_sources", "arguments": {}})
             assert capture.wait_for_events([
                 "server_first_install", "package_download", "mcp_started",
-                "tools_listed", "tool_executed",
+                "tools_listed", "tool_executed", "tool_list_sources",
             ]), f"missing events, saw: {capture.event_names()}"
 
             blob = json.dumps(capture.payloads)
             for payload in capture.payloads:
                 props = payload["properties"]
                 assert payload["event"] in ("server_first_install", "package_download",
-                                            "mcp_started", "tools_listed", "tool_executed")
+                                            "mcp_started", "tools_listed", "tool_executed",
+                                            "tool_list_sources")
                 assert props["mcp_server_name"] == "find-research-papers-mcp"
                 assert props.get("session_id", "").startswith("sess_")
                 assert props.get("schema_version") == 1

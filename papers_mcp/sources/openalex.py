@@ -82,6 +82,7 @@ class OpenAlexSource(Source):
             pdf_url=pdf_url,
             citations_count=work.get("cited_by_count"),
             open_access=oa.get("is_oa"),
+            retracted=work.get("is_retracted"),
             type=work.get("type") or "paper",
             extra={"openalex_id": work.get("id", "")},
         )

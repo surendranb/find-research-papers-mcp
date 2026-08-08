@@ -4,6 +4,8 @@
 Scholar, OpenAlex, Crossref, and PubMed. Metadata, references, and citations
 are reachable even when the full text is paywalled."""
 
+import time
+
 from mcp.server.mcpserver import MCPServer
 
 from . import telemetry
@@ -18,7 +20,8 @@ INSTRUCTIONS = (
     "PubMed). get_paper resolves one paper and returns its references and "
     "citing works — this works even for paywalled journals (Nature etc.) "
     "because metadata and reference lists are public. Always include the url "
-    "and doi with any paper you recommend."
+    "and doi with any paper you recommend. Before interpreting results, call "
+    "get_research_method for the source-by-source rules and quirks."
 )
 
 mcp = MCPServer(SERVER_NAME, version=MCP_SERVER_VERSION, instructions=INSTRUCTIONS)
@@ -78,8 +81,18 @@ async def search_papers(query: str, sources: list[str] | None = None,
     limit = max(1, min(int(limit), 50))
     if sort not in ("relevance", "citations", "date"):
         raise ValueError("sort must be one of: relevance, citations, date")
-    return search_all(query, sources, limit, year_from, year_to, sort,
-                      open_access_only)
+    t0 = time.monotonic()
+    result = search_all(query, sources, limit, year_from, year_to, sort,
+                        open_access_only)
+    send_telemetry("tool_search", {
+        "hits_count": len(result["hits"]),
+        "sources_used": len(result["sources_queried"]),
+        "skipped": len(result["skipped"]),
+        "skipped_reasons": list({s["reason"] for s in result["skipped"]}),
+        "latency_ms": int((time.monotonic() - t0) * 1000),
+        "retracted_hits_count": sum(1 for h in result["hits"] if h.get("retracted")),
+    })
+    return result
 
 
 @mcp.tool(title="Get paper details, references and citations",
@@ -88,7 +101,8 @@ async def search_papers(query: str, sources: list[str] | None = None,
                       "citing it) — works even for paywalled papers")
 async def get_paper(identifier: str, id_type: str = "auto",
                     include_references: bool = True,
-                    include_citations: bool = True) -> dict:
+                    include_citations: bool = True,
+                    verify: bool = True) -> dict:
     """Resolve one paper and its reference/citation graph.
 
     Args:
@@ -99,16 +113,95 @@ async def get_paper(identifier: str, id_type: str = "auto",
         include_references: include the papers this paper cites.
         include_citations: include papers citing this one (OpenAlex fallback
             for arXiv/DOI/PMID identifiers).
+        verify: HEAD-check the landing page and cross-check the retraction
+            flag (OpenAlex) — reported under verification, never fatal.
 
     Returns:
         paper: unified PaperHit for the paper itself.
         references: list of papers it cites.
         citations: list of papers citing it.
+        verification: {resolves, retracted, checked_at} when verify=True.
         notes: explanations when a graph leg is unavailable.
     """
     from .sources import get_paper as _get_paper
 
-    return _get_paper(identifier, id_type, include_references, include_citations)
+    t0 = time.monotonic()
+    result = _get_paper(identifier, id_type, include_references,
+                        include_citations, verify)
+    if "error" not in result:
+        verification = result.get("verification") or {}
+        send_telemetry("tool_get_paper", {
+            "id_type": result.get("id_type"),
+            "included_refs": include_references,
+            "included_cites": include_citations,
+            "verified": verify,
+            "resolves": verification.get("resolves"),
+            "retracted": verification.get("retracted"),
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        })
+    return result
+
+
+RESEARCH_METHOD = {
+    "tiers": [
+        {"tier": 1, "name": "broad discovery", "tools": ["search_papers"],
+         "when": "unknown territory: let every source compete on the query"},
+        {"tier": 2, "name": "deep dive", "tools": ["get_paper"],
+         "when": "a specific paper, DOI, arXiv id, or PMID: metadata + "
+                 "references + citations, even for paywalled journals"},
+        {"tier": 3, "name": "verification", "tools": ["get_paper verify=true"],
+         "when": "before citing or answering from a result: check "
+                 "verification.resolves and verification.retracted"},
+    ],
+    "rules": [
+        "Always pair a search hit with its url and doi when recommending it.",
+        "Prefer hits whose abstract is non-empty and whose source is listed in "
+        "the response — skipped sources mean that index did not answer.",
+        "Do not fabricate citation counts, years, or authors: use the numbers "
+        "the API returned, and treat None as unknown, not zero.",
+        "A retracted=true hit must never be presented as valid evidence.",
+    ],
+    "quirks": [
+        "Semantic Scholar 429s on the shared pool without a key — the server "
+        "skips it and reports it under skipped; retry later or set "
+        "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY.",
+        "OpenAlex abstracts are reconstructed from an inverted index; short or "
+        "odd-spaced abstracts are the source's doing, not a bug.",
+        "arXiv and PubMed expose no public citation graph: references/"
+        "citations may be empty, with an OpenAlex fallback where indexed.",
+        "Crossref cannot answer a bare-title lookup well; always search with "
+        "keywords or a DOI.",
+    ],
+    "verify_steps": [
+        "1. search_papers(query, sources=..., sort='citations') for the "
+        "canonical works first.",
+        "2. get_paper(identifier, include_references=True, "
+        "include_citations=True, verify=True) on the top hit.",
+        "3. Read verification: resolves=true means the landing page answers; "
+        "retracted=true means OpenAlex flags it as retracted — stop there.",
+        "4. If verification.resolves is null, the target was offline or "
+        "bot-blocked: do not claim the paper is dead; say 'could not verify'.",
+    ],
+    "retraction_note": (
+        "Retraction flags come from OpenAlex's is_retracted field and lag "
+        "real-world retractions; absence of a flag is not proof of validity. "
+        "The server never hides a retracted hit — it labels it."
+    ),
+}
+
+
+@mcp.tool(title="Get research method",
+          description="House method for using this server: tiers, rules, "
+                      "source quirks, and verification steps")
+async def get_research_method() -> dict:
+    """Return the house research method: when to use each tool, rules for
+    interpreting results, per-source quirks, and the verification steps.
+
+    Returns:
+        method: {tiers, rules, quirks, verify_steps, retraction_note}.
+    """
+    send_telemetry("tool_get_research_method", {})
+    return {"method": RESEARCH_METHOD}
 
 
 @mcp.tool(title="List paper sources",
@@ -119,8 +212,10 @@ async def list_sources() -> list[dict]:
     API key is needed, rate limits, and whether it is currently configured."""
     from .sources import list_sources as _list
 
+    listed = _list()
     send_telemetry("tools_listed", {})
-    return _list()
+    send_telemetry("tool_list_sources", {"sources_count": len(listed)})
+    return listed
 
 
 def main():
