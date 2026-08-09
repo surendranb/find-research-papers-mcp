@@ -136,6 +136,16 @@ class MCPStdioClient:
         self.notify("notifications/initialized")
         return init
 
+    def shutdown(self, timeout=15):
+        """Graceful exit: close stdin so the stdio loop ends and the process
+        exits normally — atexit hooks (session_end) only run on this path."""
+        try:
+            if self.proc.stdin is not None:
+                self.proc.stdin.close()
+            self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.close()
+
     def close(self):
         if self.proc.poll() is None:
             self.proc.terminate()
@@ -185,7 +195,8 @@ def test_initialize_and_list_tools():
 
         tools = c.request("tools/list")
         names = [t["name"] for t in tools["result"]["tools"]]
-        assert names == ["search_papers", "get_paper", "get_research_method", "list_sources"]
+        assert names == ["search_papers", "get_paper", "get_research_method",
+                         "list_sources", "skills_list", "skill_read"]
 
 
 def test_list_sources_schema():
@@ -297,7 +308,9 @@ def test_get_paper_unknown_identifier():
 
 
 def test_telemetry_events_flow(tmp_path):
-    """Fresh install: boot + tool events reach the gateway, PII-free (SUR-86)."""
+    """Fresh install: boot + tool events reach the gateway, PII-free (SUR-86).
+    Contract v2: schema_version 2, no launch_channel, tool_executed carries
+    status/latency_ms/rows_returned/result_chars, tools_listed has tool_count."""
     capture = CaptureServer()
     try:
         with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
@@ -314,10 +327,27 @@ def test_telemetry_events_flow(tmp_path):
                 props = payload["properties"]
                 assert payload["event"] in ("server_first_install", "package_download",
                                             "mcp_started", "tools_listed", "tool_executed",
-                                            "tool_list_sources")
+                                            "tool_list_sources", "session_end")
                 assert props["mcp_server_name"] == "find-research-papers-mcp"
                 assert props.get("session_id", "").startswith("sess_")
-                assert props.get("schema_version") == 1
+                assert props.get("schema_version") == 2
+                assert "launch_channel" not in props, "v2 envelope must drop launch_channel"
+
+            listed = [p for p in capture.payloads if p["event"] == "tools_listed"]
+            assert listed and listed[0]["properties"]["tool_count"] == 6
+
+            executed = [p for p in capture.payloads if p["event"] == "tool_executed"]
+            assert executed, "tool_executed missing"
+            ex = executed[0]["properties"]
+            assert ex["tool_name"] == "list_sources"
+            assert ex["status"] == "success"
+            assert isinstance(ex["latency_ms"], int)
+            assert ex["rows_returned"] == 5  # five sources
+            assert isinstance(ex["result_chars"], int) and ex["result_chars"] > 0
+            # per-request dual-era client capture (legacy handshake era here)
+            assert ex.get("mcp_client_name") == "e2e-test"
+            assert ex.get("mcp_client_version") == "0.0.1"
+
             # zero PII / no local paths (SUR-86 #5, SUR-259 telemetry assertions)
             assert str(tmp_path) not in blob, "local path leaked into telemetry"
             assert "Users/" not in blob, "home path leaked into telemetry"
@@ -327,18 +357,176 @@ def test_telemetry_events_flow(tmp_path):
         capture.close()
 
 
-def test_telemetry_opt_out(tmp_path):
-    """Opt-out env var: server boots and works, but nothing is sent."""
+def test_failure_telemetry_error_and_exception(tmp_path):
+    """The v2 headline: errors and exceptions are no longer invisible.
+    Error-shaped result -> status=error; raised exception -> status=exception;
+    both carry the taxonomy. Offline (no upstream API is hit)."""
     capture = CaptureServer()
     try:
-        with MCPStdioClient(env_extra={"HOME": str(tmp_path),
-                                       "FIND_RESEARCH_PAPERS_MCP_TELEMETRY": "false"},
-                            telemetry_url=capture.url) as c:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
+            c.handshake()
+            # error-shaped result dict (unknown id_type short-circuits offline)
+            res = c.request("tools/call", {
+                "name": "get_paper",
+                "arguments": {"identifier": "whatever", "id_type": "bogus"},
+            })
+            assert "error" in parse_result(res["result"])
+            # raised exception (sort validation)
+            res = c.request("tools/call", {
+                "name": "search_papers",
+                "arguments": {"query": "x", "sort": "bogus"},
+            })
+            assert res["result"].get("isError") is True
+
+            assert capture.wait_for_events(["tool_executed", "tool_get_paper",
+                                            "tool_search"]), capture.event_names()
+            executed = {p["properties"]["tool_name"]: p["properties"]
+                        for p in capture.payloads if p["event"] == "tool_executed"}
+
+            err = executed["get_paper"]
+            assert err["status"] == "error"
+            assert err["error_category"] == "ValidationError"
+            assert "unknown id_type" in err["error_message"]
+            assert err["rows_returned"] == 0
+            assert isinstance(err["latency_ms"], int)
+
+            exc = executed["search_papers"]
+            assert exc["status"] == "exception"
+            assert exc["error_category"] == "ValidationError"
+            assert "sort must be one of" in exc["error_message"]
+            assert exc["rows_returned"] == 0
+
+            # domain events now fire on failure paths too, with a status prop
+            gp = [p["properties"] for p in capture.payloads if p["event"] == "tool_get_paper"]
+            assert gp and gp[0]["status"] == "error"
+            ts = [p["properties"] for p in capture.payloads if p["event"] == "tool_search"]
+            assert ts and ts[0]["status"] == "exception"
+    finally:
+        capture.close()
+
+
+def test_session_end(tmp_path):
+    """Graceful exit emits session_end with duration, tool sequence/counts."""
+    capture = CaptureServer()
+    try:
+        c = MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url)
+        try:
+            c.handshake()
+            c.request("tools/call", {"name": "get_research_method", "arguments": {}})
+            c.request("tools/call", {"name": "get_research_method", "arguments": {}})
+            c.shutdown()
+            assert capture.wait_for_events(["session_end"]), capture.event_names()
+            props = [p for p in capture.payloads if p["event"] == "session_end"][0]["properties"]
+            assert isinstance(props["session_duration_s"], int)
+            assert props["tool_sequence"] == ["get_research_method", "get_research_method"]
+            assert props["tool_counts"] == {"get_research_method": 2}
+            assert props["calls_total"] == 2
+        finally:
+            c.close()
+    finally:
+        capture.close()
+
+
+def test_per_request_meta_client_capture(tmp_path):
+    """2026-era per-request _meta clientInfo must win over the stored
+    initialize handshake. (The SDK rejects the protocolVersion _meta key on a
+    handshake-era connection with -32600 — era separation is SDK-enforced —
+    so only the clientInfo key is exercised here.)"""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
+            c.handshake()  # handshake says e2e-test
+            res = c.request("tools/call", {
+                "name": "get_research_method", "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "meta-era-client", "version": "9.9.9"},
+                },
+            })
+            assert "error" not in res, res.get("error")
+            assert capture.wait_for_events(["tool_executed"]), capture.event_names()
+            ex = [p["properties"] for p in capture.payloads
+                  if p["event"] == "tool_executed"][0]
+            assert ex.get("mcp_client_name") == "meta-era-client", \
+                "per-request _meta clientInfo must override the handshake"
+            assert ex.get("mcp_client_version") == "9.9.9"
+            # protocol version falls back to the handshake era on this connection
+            assert ex.get("mcp_protocol_version") == "2025-06-18"
+    finally:
+        capture.close()
+
+
+def test_skills_list_and_read(tmp_path):
+    """skills_list names the starter skill; skill_read returns its content
+    (GitHub raw fetch with local-checkout fallback) and fires the skill_read
+    event with skill_name + fetch_ok."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
+            c.handshake()
+            res = c.request("tools/call", {"name": "skills_list", "arguments": {}})
+            skills = parse_result(res["result"])["skills"]
+            assert {"interpreting-errors"} == {s["name"] for s in skills}
+            assert all(s["description"] for s in skills)
+
+            res = c.request("tools/call", {
+                "name": "skill_read",
+                "arguments": {"name": "interpreting-errors"},
+            }, timeout=30)
+            data = parse_result(res["result"])
+            assert "error" not in data, data
+            assert data["name"] == "interpreting-errors"
+            assert "search_papers" in data["content"]
+
+            # unknown skill: graceful error, never a crash
+            res = c.request("tools/call", {
+                "name": "skill_read", "arguments": {"name": "no-such-skill"},
+            })
+            assert "not found" in parse_result(res["result"])["error"]
+
+            assert capture.wait_for_events(["skill_read"]), capture.event_names()
+            reads = [p["properties"] for p in capture.payloads if p["event"] == "skill_read"]
+            assert any(r["skill_name"] == "interpreting-errors" and
+                       isinstance(r["fetch_ok"], bool) for r in reads)
+    finally:
+        capture.close()
+
+
+def test_telemetry_opt_out(tmp_path):
+    """Opt-out env var: server boots and works, but nothing is sent — and no
+    side effects either: no identity dir, no ~/.find_research_papers_mcp writes."""
+    capture = CaptureServer()
+    try:
+        c = MCPStdioClient(env_extra={"HOME": str(tmp_path),
+                                      "FIND_RESEARCH_PAPERS_MCP_TELEMETRY": "false"},
+                           telemetry_url=capture.url)
+        try:
             c.handshake()
             c.request("tools/list")
             c.request("tools/call", {"name": "list_sources", "arguments": {}})
-            time.sleep(3)
+            c.shutdown()  # graceful exit: session_end must ALSO be suppressed
+            time.sleep(1)
             assert capture.payloads == [], f"expected no telemetry, got: {capture.event_names()}"
+            assert not (tmp_path / ".find_research_papers_mcp").exists(), \
+                "opt-out must gate identity-file creation, not just the send"
+        finally:
+            c.close()
+    finally:
+        capture.close()
+
+
+@pytest.mark.parametrize("var", ["DISABLE_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY"])
+def test_telemetry_opt_out_generic_vars(tmp_path, var):
+    """Each generic opt-out var disables telemetry and all side effects."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path), var: "1"},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            c.request("tools/call", {"name": "get_research_method", "arguments": {}})
+            time.sleep(2)
+            assert capture.payloads == [], f"{var}=1: got {capture.event_names()}"
+            assert not (tmp_path / ".find_research_papers_mcp").exists()
     finally:
         capture.close()
 

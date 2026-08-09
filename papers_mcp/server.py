@@ -4,7 +4,10 @@
 Scholar, OpenAlex, Crossref, and PubMed. Metadata, references, and citations
 are reachable even when the full text is paywalled."""
 
+import json
 import time
+from pathlib import Path
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
@@ -22,7 +25,9 @@ INSTRUCTIONS = (
     "citing works — this works even for paywalled journals (Nature etc.) "
     "because metadata and reference lists are public. Always include the url "
     "and doi with any paper you recommend. Before interpreting results, call "
-    "get_research_method for the source-by-source rules and quirks."
+    "get_research_method for the source-by-source rules and quirks. When a "
+    "tool returns an error or skipped sources, read the 'interpreting-errors' "
+    "skill (skill_read) before retrying or giving up."
 )
 
 mcp = MCPServer(SERVER_NAME, version=MCP_SERVER_VERSION, instructions=INSTRUCTIONS)
@@ -31,17 +36,160 @@ telemetry.announce_and_fire_boot_events()
 _original_tool = mcp.tool
 
 
+# --- tools_listed from the real protocol tools/list handler ---
+# _handle_list_tools routes through self.list_tools(); shadowing the instance
+# attribute keeps every protocol tools/list (and only that) firing the event.
+async def _list_tools_with_telemetry():
+    tools = await mcp._list_tools_orig()
+    send_telemetry("tools_listed", {"tool_count": len(tools)})
+    return tools
+
+
+mcp._list_tools_orig = mcp.list_tools
+mcp.list_tools = _list_tools_with_telemetry
+
+
+def _count_rows(result: Any) -> int:
+    """Count the ITEMS OF DATA a tool returned — the definitive 'it worked'
+    signal (0 = no data). Shape-aware per this server's actual result shapes:
+      - search_papers {hits: [...]}       -> len(hits)
+      - get_paper {paper: {...}}          -> 1 (one paper resolved)
+      - get_research_method {method: ...} -> 1
+      - list_sources [...]                -> len
+      - skills_list {skills: [...]}       -> len(skills)
+      - skill_read {content: "..."}       -> 1 if it carries real text
+      - error/missing-shaped payload      -> 0
+    """
+    try:
+        if result is None:
+            return 0
+        if isinstance(result, list):
+            return len(result)
+        if isinstance(result, dict):
+            if result.get("error"):
+                return 0
+            if isinstance(result.get("hits"), list):
+                return len(result["hits"])
+            if isinstance(result.get("skills"), list):
+                return len(result["skills"])
+            if "paper" in result:
+                return 1 if result.get("paper") else 0
+            if "content" in result:
+                return 1 if str(result.get("content") or "").strip() else 0
+            return 1 if result else 0
+        if isinstance(result, str):
+            return 1 if result.strip() else 0
+        return 1 if result else 0
+    except Exception:
+        return 0
+
+
+def _result_chars(result: Any) -> int:
+    """Size of the stringified result (proxy for context spent on it)."""
+    try:
+        if result is None:
+            return 0
+        if isinstance(result, str):
+            return len(result)
+        return len(json.dumps(result, default=str))
+    except Exception:
+        return 0
+
+
+def _categorize_error_result(message: str) -> str:
+    """Map this server's error-shaped result dicts onto the standard taxonomy
+    (from the actual error paths in sources/__init__.py and skill_read)."""
+    m = (message or "").lower()
+    if "unknown id_type" in m or "unknown source" in m or "must be one of" in m \
+            or "not found. call skills_list" in m:
+        return "ValidationError"  # bad model-sent args
+    if "key_required" in m or "api key" in m or "401" in m or "403" in m:
+        return "AuthError"
+    return "APIError"  # upstream lookup/network failure (incl. "paper not found via ...")
+
+
+def _categorize_exception(exc: BaseException) -> str:
+    """error_category taxonomy: ValidationError (bad model-sent args),
+    AuthError, APIError (upstream), InitError (config/boot), else class name."""
+    name = exc.__class__.__name__
+    if isinstance(exc, (ValueError, TypeError)):
+        return "ValidationError"
+    if name == "UnconfiguredError":
+        return "AuthError"
+    try:
+        import requests
+        if isinstance(exc, requests.RequestException):
+            return "APIError"
+    except Exception:
+        pass
+    if isinstance(exc, (ImportError, OSError)) and "config" in str(exc).lower():
+        return "InitError"
+    return name
+
+
 def _telemetry_tool(name=None, title=None, description=None, annotations=None,
                     icons=None, meta=None, structured_output=None):
+    """Wrap every tool with fire-and-forget telemetry. tool_executed fires
+    AFTER the tool body (finally-block), so errors and exceptions — previously
+    invisible — are captured: status success|error|exception|cancelled,
+    latency_ms, shape-aware rows_returned, result_chars, error taxonomy.
+    Telemetry must never affect the tool call: every capture step is guarded,
+    and exceptions are re-raised untouched."""
     def decorator(func):
         import functools
         import inspect
 
         @functools.wraps(func)
         async def wrapper(*args, ctx: Context = None, **kwargs):
-            telemetry.capture_client_info(ctx)
-            send_telemetry("tool_executed", {"tool_name": name or func.__name__})
-            return await func(*args, **kwargs)
+            tool_name = name or func.__name__
+            start = time.monotonic()
+            status = "success"
+            error_category = None
+            error_message = None
+            result = None
+            request_props = {}
+            try:
+                # Legacy session store (fallback for events without ctx) ...
+                telemetry.capture_client_info(ctx)
+                # ... and per-request dual-era capture (2026 _meta first,
+                # handshake fallback) — always wins over stored state.
+                request_props = telemetry.capture_request(ctx)
+            except Exception:
+                pass
+            try:
+                result = await func(*args, **kwargs)
+                if isinstance(result, dict) and result.get("error"):
+                    status = "error"
+                    error_message = str(result["error"])
+                    error_category = _categorize_error_result(error_message)
+                return result
+            except Exception as e:
+                status = "exception"
+                error_category = _categorize_exception(e)
+                error_message = str(e)
+                raise
+            except BaseException as e:  # cancellation (asyncio) / interpreter exit
+                status = "cancelled"
+                error_category = e.__class__.__name__
+                raise
+            finally:
+                try:
+                    props = {
+                        "tool_name": tool_name,
+                        "status": status,
+                        "latency_ms": int((time.monotonic() - start) * 1000),
+                        "rows_returned": _count_rows(result),
+                        "result_chars": _result_chars(result),
+                        **request_props,
+                    }
+                    if error_category:
+                        props["error_category"] = error_category
+                    if error_message:
+                        props["error_message"] = telemetry.scrub(error_message)[:200]
+                    telemetry.record_tool_call(tool_name)
+                    send_telemetry("tool_executed", props)
+                except Exception:
+                    pass
 
         # functools.wraps copies the wrapped fn's __annotations__, hiding the
         # ctx annotation FastMCP uses to locate the injectable Context param.
@@ -80,16 +228,30 @@ async def search_papers(query: str, sources: list[str] | None = None,
         hits: unified list of papers with id, title, authors, year, venue,
             abstract, doi, url, pdf_url, citations_count, open_access, source.
         skipped: sources that were unavailable (missing API key or error).
+
+    If sources appear in skipped or the call errors, read the
+    'interpreting-errors' skill (skill_read) for what each shape means and
+    how to recover.
     """
     from .sources import search_all
 
-    limit = max(1, min(int(limit), 50))
-    if sort not in ("relevance", "citations", "date"):
-        raise ValueError("sort must be one of: relevance, citations, date")
     t0 = time.monotonic()
-    result = search_all(query, sources, limit, year_from, year_to, sort,
-                        open_access_only)
+    try:
+        limit = max(1, min(int(limit), 50))
+        if sort not in ("relevance", "citations", "date"):
+            raise ValueError("sort must be one of: relevance, citations, date")
+        result = search_all(query, sources, limit, year_from, year_to, sort,
+                            open_access_only)
+    except Exception:
+        # Failure path for the domain event too (tool_executed carries the
+        # full error taxonomy; this keeps tool_search analyzable end-to-end).
+        send_telemetry("tool_search", {
+            "status": "exception",
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        })
+        raise
     send_telemetry("tool_search", {
+        "status": "success",
         "hits_count": len(result["hits"]),
         "sources_used": len(result["sources_queried"]),
         "skipped": len(result["skipped"]),
@@ -127,15 +289,29 @@ async def get_paper(identifier: str, id_type: str = "auto",
         citations: list of papers citing it.
         verification: {resolves, retracted, checked_at} when verify=True.
         notes: explanations when a graph leg is unavailable.
+
+    On an error-shaped result ({"error": ...}) or unexpected notes, read the
+    'interpreting-errors' skill (skill_read) before retrying or giving up.
     """
     from .sources import get_paper as _get_paper
 
     t0 = time.monotonic()
     result = _get_paper(identifier, id_type, include_references,
                         include_citations, verify)
-    if "error" not in result:
+    if "error" in result:
+        # Failure path — previously skipped entirely (errors were invisible).
+        send_telemetry("tool_get_paper", {
+            "status": "error",
+            "id_type": result.get("id_type"),
+            "included_refs": include_references,
+            "included_cites": include_citations,
+            "verified": verify,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        })
+    else:
         verification = result.get("verification") or {}
         send_telemetry("tool_get_paper", {
+            "status": "success",
             "id_type": result.get("id_type"),
             "included_refs": include_references,
             "included_cites": include_citations,
@@ -218,9 +394,87 @@ async def list_sources() -> list[dict]:
     from .sources import list_sources as _list
 
     listed = _list()
-    send_telemetry("tools_listed", {})
+    # tools_listed now fires from the real protocol tools/list handler (with
+    # tool_count) — the mislabeled copy that fired here was moved, not lost.
     send_telemetry("tool_list_sources", {"sources_count": len(listed)})
     return listed
+
+
+# --- Skills: server-authored playbooks the model can fetch on demand ---
+# Registry is the allowlist: skill_read only ever fetches names listed here,
+# from THIS repo's pinned raw URL (not configurable).
+SKILLS_REGISTRY = {
+    "interpreting-errors": "How to read this server's error and skipped "
+                           "shapes (search_papers, get_paper) and recover",
+}
+_SKILLS_BASE_URL = ("https://raw.githubusercontent.com/surendranb/"
+                    "find-research-papers-mcp/main/skills")
+_LOCAL_SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+
+
+@mcp.tool(title="List available skills",
+          description="List this server's skills (playbooks): guidance for "
+                      "interpreting results and recovering from errors. Fetch "
+                      "one with skill_read")
+async def skills_list() -> dict:
+    """List available skills with one-line descriptions.
+
+    Read a skill with skill_read(name) whenever a tool result needs
+    interpretation — especially error-shaped results and skipped sources.
+
+    Returns:
+        skills: list of {name, description}.
+    """
+    return {"skills": [{"name": n, "description": d}
+                       for n, d in SKILLS_REGISTRY.items()]}
+
+
+@mcp.tool(title="Read a skill",
+          description="Fetch the full content of one skill by name (see "
+                      "skills_list). Read 'interpreting-errors' whenever a "
+                      "tool returns an error or skipped sources")
+async def skill_read(name: str) -> dict:
+    """Fetch one skill's full markdown content.
+
+    Args:
+        name: skill name from skills_list (e.g. "interpreting-errors").
+
+    Returns:
+        name, content — or an error if the skill does not exist.
+    """
+    if name not in SKILLS_REGISTRY:
+        send_telemetry("skill_read", {"skill_name": name, "fetch_ok": False})
+        return {"error": f"Skill '{name}' not found. Call skills_list to see "
+                         f"available skills."}
+
+    import requests
+
+    content = None
+    fetch_ok = False
+    try:
+        resp = requests.get(f"{_SKILLS_BASE_URL}/{name}.md", timeout=5)
+        if resp.ok and resp.text.strip():
+            content = resp.text
+            fetch_ok = True
+    except Exception:
+        pass
+
+    if content is None:
+        # Fallback: local copy when running from a source checkout.
+        try:
+            local = _LOCAL_SKILLS_DIR / f"{name}.md"
+            if local.is_file():
+                content = local.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    send_telemetry("skill_read", {"skill_name": name, "fetch_ok": fetch_ok})
+    if content is None:
+        return {"error": f"Skill '{name}' is temporarily unavailable (fetch "
+                         f"failed and no local copy). Proceed with the tool "
+                         f"docstrings and get_research_method."}
+    return {"name": name, "description": SKILLS_REGISTRY[name],
+            "content": content}
 
 
 def main():

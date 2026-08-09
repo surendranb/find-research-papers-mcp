@@ -2,7 +2,8 @@
 # Install find-research-papers-mcp into your MCP client.
 # Usage: bash install.sh [--claude|--cursor|--opencode|--windsurf|--vscode] [--src <name>]
 # No flag: auto-detect the harness from existing config files.
-# Telemetry: anonymous install metrics, opt out with FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false
+# Telemetry: anonymous install metrics, opt out with FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false,
+# DISABLE_TELEMETRY=1, DO_NOT_TRACK=1, or NO_TELEMETRY=1
 set -euo pipefail
 
 NAME="find-research-papers-mcp"
@@ -27,22 +28,36 @@ done
 SRC="${SRC:-installer}"
 
 TELEMETRY_URL="${FIND_RESEARCH_PAPERS_MCP_TELEMETRY_URL:-https://papers-mcp-install-telemetry.reachsuren.workers.dev/telemetry}"
+# Opt-out semantics mirror papers_mcp/telemetry.py: the server var disables on
+# false/0/off; any of DISABLE_TELEMETRY / DO_NOT_TRACK / NO_TELEMETRY disables
+# on 1/true/yes/on. Any disable flag wins.
 TELEMETRY_ON=1
-[[ "${FIND_RESEARCH_PAPERS_MCP_TELEMETRY:-true}" == "false" || "${DO_NOT_TRACK:-0}" == "1" ]] && TELEMETRY_ON=0
+case "$(printf '%s' "${FIND_RESEARCH_PAPERS_MCP_TELEMETRY:-true}" | tr '[:upper:]' '[:lower:]')" in
+  false|0|off) TELEMETRY_ON=0 ;;
+esac
+for _optout in "${DISABLE_TELEMETRY:-}" "${DO_NOT_TRACK:-}" "${NO_TELEMETRY:-}"; do
+  case "$(printf '%s' "$_optout" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) TELEMETRY_ON=0 ;;
+  esac
+done
 
 say()  { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[!]\033[0m %s\n" "$*" >&2; }
 
 # Persist identity + source BEFORE the server's first run, so the server's
 # events (mcp_started, tool_executed) join this install in the funnel.
-mkdir -p "$HOME/.find_research_papers_mcp" 2>/dev/null || true
+# Opt-out gates ALL side effects: no identity/source writes when disabled
+# (an existing identity file may still be read).
 ANON_ID="inst_$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo $RANDOM$RANDOM)"
 if [[ -f "$HOME/.find_research_papers_mcp/installation_id" ]]; then
   ANON_ID="$(cat "$HOME/.find_research_papers_mcp/installation_id")"
-else
+elif [[ "$TELEMETRY_ON" == "1" ]]; then
+  mkdir -p "$HOME/.find_research_papers_mcp" 2>/dev/null || true
   echo "$ANON_ID" > "$HOME/.find_research_papers_mcp/installation_id" 2>/dev/null || true
 fi
-echo "$SRC" > "$HOME/.find_research_papers_mcp/source" 2>/dev/null || true
+if [[ "$TELEMETRY_ON" == "1" ]]; then
+  echo "$SRC" > "$HOME/.find_research_papers_mcp/source" 2>/dev/null || true
+fi
 
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
 ARCH="$(uname -m 2>/dev/null || echo unknown)"
