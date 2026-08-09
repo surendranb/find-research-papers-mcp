@@ -5,12 +5,13 @@
  */
 
 const GATEWAY_VERSION = "1";
+const SERVER_NAME = "find-research-papers-mcp";
 
 const KNOWN_EVENTS = new Set([
   "mcp_started", "tool_executed", "server_first_install", "resource_read",
   "tool_search", "tool_get_paper", "tool_list_sources", "tool_get_research_method",
   "package_download", "install_intent", "install_completed", "surface_click",
-  "skill_tip_shown", "tools_listed",
+  "skill_tip_shown", "tools_listed", "session_end", "skill_read", "server_discovered",
 ]);
 
 // /go/<surface> records a click, then redirects to the client install deeplink.
@@ -19,7 +20,7 @@ const GO_TARGETS = {
 };
 
 const KNOWN_SRC = new Set([
-  "readme", "glama", "mcpso", "pulsemcp", "musicmcp", "setup", "cursor_button",
+  "readme", "glama", "mcpso", "pulsemcp", "papersmcp", "setup", "cursor_button",
   "vscode_button", "installer",
 ]);
 
@@ -72,6 +73,7 @@ export default {
 
       const eventName = typeof body.event === "string" && body.event ? body.event.slice(0, 200) : "malformed_event";
       let props = (body.properties && typeof body.properties === "object") ? body.properties : {};
+      if (eventName === "malformed_event") props.raw_event_name = String(body.event ?? "").slice(0, 200);
 
       const propsSize = JSON.stringify(props).length;
       if (propsSize > MAX_PROPS_BYTES) {
@@ -87,8 +89,15 @@ export default {
       props.as_organization = asOrganization; // hosting-vs-residential sift signal
       props.via_gateway = true;
       props.gateway_version = GATEWAY_VERSION;
+      if (props.mcp_server_name && props.mcp_server_name !== SERVER_NAME) {
+        props.client_reported_server_name = props.mcp_server_name;
+      }
+      props.mcp_server_name = SERVER_NAME;
       if (!KNOWN_EVENTS.has(eventName)) props.unregistered_event = true;
       if (!body.distinct_id) props.missing_distinct_id = true;
+      else if (!/^(inst_|anon_)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(body.distinct_id))) {
+        props.nonstandard_distinct_id = true;
+      }
 
       if (props.internal_run === true) props.traffic_class = "internal";
       else if (props.run_context === "ci" || props.agent_name === "ci_runner") props.traffic_class = "ci";
@@ -122,6 +131,7 @@ export default {
           as_organization: asOrganization,
           via_gateway: true,
           gateway_version: GATEWAY_VERSION,
+          mcp_server_name: SERVER_NAME,
           surface: surface.slice(0, 32),
           known_surface: Boolean(target),
           user_agent: userAgent,
@@ -154,6 +164,7 @@ export default {
               as_organization: asOrganization,
               via_gateway: true,
               gateway_version: GATEWAY_VERSION,
+              mcp_server_name: SERVER_NAME,
               install_source: bucketSrc(body.src),
               install_source_raw: body.src ? String(body.src).slice(0, 64) : null,
               execution_mode: body.execution_mode || "unknown",
@@ -191,6 +202,7 @@ export default {
           $geoip_disable: true,
           via_gateway: true,
           gateway_version: GATEWAY_VERSION,
+          mcp_server_name: SERVER_NAME,
           install_source: bucketSrc(url.searchParams.get("src")),
           install_source_raw: url.searchParams.get("src") ? String(url.searchParams.get("src")).slice(0, 64) : null,
           referer: (request.headers.get("referer") || "direct").slice(0, 200),
