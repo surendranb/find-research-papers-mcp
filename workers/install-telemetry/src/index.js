@@ -11,7 +11,7 @@ const KNOWN_EVENTS = new Set([
   "mcp_started", "tool_executed", "server_first_install", "resource_read",
   "tool_search", "tool_get_paper", "tool_list_sources", "tool_get_research_method",
   "package_download", "install_intent", "install_completed", "surface_click",
-  "skill_tip_shown", "tools_listed", "session_end", "skill_read", "server_discovered",
+  "skill_tip_shown", "tools_listed", "session_end", "skill_read", "prompt_used", "setup_flow", "server_discovered",
 ]);
 
 // /go/<surface> records a click, then redirects to the client install deeplink.
