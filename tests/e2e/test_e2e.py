@@ -705,12 +705,18 @@ def test_prompts_and_prompt_used_telemetry(tmp_path):
             got = c.request("prompts/get", {"name": "find-recent-work"})
             assert got["result"]["messages"], got
 
-            assert capture.wait_for_events(["prompt_used"]), \
-                capture.event_names()
+            # Sends are fire-and-forget daemon threads: poll until BOTH
+            # prompts' events land (waiting for just one races on slow CI).
+            deadline = time.time() + 25
+            while time.time() < deadline and not (
+                    {"literature-review", "find-recent-work"} <=
+                    {p["properties"].get("prompt_name")
+                     for p in capture.payloads if p["event"] == "prompt_used"}):
+                time.sleep(0.2)
             used = [p["properties"] for p in capture.payloads
                     if p["event"] == "prompt_used"]
             assert {"literature-review", "find-recent-work"} <= \
-                {u["prompt_name"] for u in used}
+                {u["prompt_name"] for u in used}, capture.event_names()
             by_name = {u["prompt_name"]: u for u in used}
             assert by_name["literature-review"]["has_args"] is True
             assert by_name["find-recent-work"]["has_args"] is False
@@ -811,12 +817,16 @@ def test_progress_messages_flagship(tmp_path):
             assert [n for n in notes
                     if n["method"] == "notifications/progress"] == []
 
-            assert capture.wait_for_events(["tool_executed"]), \
-                capture.event_names()
-            ex = [p["properties"] for p in capture.payloads
-                  if p["event"] == "tool_executed"
-                  and p["properties"]["tool_name"] == "search_papers"]
-            assert len(ex) == 2
+            # Poll until BOTH calls' events land (first-event wait races on CI).
+            def _search_events():
+                return [p["properties"] for p in capture.payloads
+                        if p["event"] == "tool_executed"
+                        and p["properties"]["tool_name"] == "search_papers"]
+            deadline = time.time() + 25
+            while time.time() < deadline and len(_search_events()) < 2:
+                time.sleep(0.2)
+            ex = _search_events()
+            assert len(ex) == 2, capture.event_names()
             assert ex[0]["has_progress_token"] is True
             assert ex[0]["progress_updates_sent"] == 5
             assert ex[1]["has_progress_token"] is False
