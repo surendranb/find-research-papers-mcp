@@ -127,14 +127,49 @@ class MCPStdioClient:
         self.proc.stdin.write(json.dumps(msg) + "\n")
         self.proc.stdin.flush()
 
-    def handshake(self):
+    def handshake(self, capabilities=None):
         init = self.request("initialize", {
             "protocolVersion": "2025-06-18",
-            "capabilities": {},
+            "capabilities": capabilities if capabilities is not None else {},
             "clientInfo": {"name": "e2e-test", "version": "0.0.1"},
         })
         self.notify("notifications/initialized")
         return init
+
+    def request_full(self, method, params=None, timeout=60,
+                     request_handler=None):
+        """Like request(), but also captures server->client notifications and
+        answers server->client REQUESTS (e.g. elicitation/create) via
+        request_handler(method, params) -> result dict.
+
+        Returns (response, notifications)."""
+        self._next_id += 1
+        req_id = self._next_id
+        msg = {"jsonrpc": "2.0", "id": req_id, "method": method}
+        if params is not None:
+            msg["params"] = params
+        self.proc.stdin.write(json.dumps(msg) + "\n")
+        self.proc.stdin.flush()
+        notifications = []
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError(f"server closed: {self.proc.stderr.read()}")
+            resp = json.loads(line)
+            if "method" in resp and "id" in resp:  # server-initiated request
+                if request_handler is not None:
+                    result = request_handler(resp["method"],
+                                             resp.get("params") or {})
+                    self.proc.stdin.write(json.dumps({
+                        "jsonrpc": "2.0", "id": resp["id"], "result": result,
+                    }) + "\n")
+                    self.proc.stdin.flush()
+                continue
+            if "method" in resp:  # notification
+                notifications.append(resp)
+                continue
+            if resp.get("id") == req_id:
+                return resp, notifications
 
     def shutdown(self, timeout=15):
         """Graceful exit: close stdin so the stdio loop ends and the process
@@ -553,5 +588,351 @@ def test_first_run_disclosure(tmp_path):
         err = proc.communicate(timeout=5)[1]
         assert "find-research-papers-mcp collects anonymous usage telemetry" in err
         assert "FIND_RESEARCH_PAPERS_MCP_TELEMETRY=false" in err
+    finally:
+        capture.close()
+
+
+# ---------------------------------------------------------------------------
+# Protocol Surfaces v1 (S1-S9)
+# ---------------------------------------------------------------------------
+
+# Unroutable proxy: forces every upstream API call to fail fast and
+# deterministically, while NO_PROXY keeps the local telemetry gateway
+# reachable. Turns the live fan-out into an offline fixture.
+PROXY_ENV = {
+    "HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9",
+    "http_proxy": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9",
+    "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+}
+
+
+def test_serverinfo_polish():
+    """S9: serverInfo carries the human title and websiteUrl (additive)."""
+    with MCPStdioClient() as c:
+        info = c.handshake()["result"]["serverInfo"]
+        assert info["name"] == "find-research-papers-mcp"
+        assert info["title"] == "Find Research Papers"
+        assert info["websiteUrl"] == \
+            "https://github.com/surendranb/find-research-papers-mcp"
+
+
+def test_tool_annotations_and_output_schema():
+    """S1: every tool is read-only + idempotent, openWorld only for tools
+    hitting external APIs. S2: outputSchema on search_papers (new) and
+    list_sources (pre-existing SDK auto-detection) only."""
+    open_world = {"search_papers": True, "get_paper": True,
+                  "get_research_method": False, "list_sources": False,
+                  "skills_list": False, "skill_read": True}
+    with MCPStdioClient() as c:
+        c.handshake()
+        tools = c.request("tools/list")["result"]["tools"]
+        assert len(tools) == 6
+        for t in tools:
+            ann = t.get("annotations")
+            assert ann, f"{t['name']} missing annotations"
+            assert ann["readOnlyHint"] is True
+            assert ann["idempotentHint"] is True
+            assert ann["openWorldHint"] is open_world[t["name"]]
+        with_schema = {t["name"] for t in tools if "outputSchema" in t}
+        assert with_schema == {"search_papers", "list_sources"}
+        sp = next(t for t in tools if t["name"] == "search_papers")
+        assert "hits" in sp["outputSchema"]["properties"]
+
+
+def test_search_papers_structured_content_matches_text():
+    """S2 dual representation: text block unchanged (legacy clients), with
+    structuredContent alongside carrying the same payload."""
+    with MCPStdioClient() as c:
+        c.handshake()
+        res = c.request("tools/call", {
+            "name": "search_papers",
+            "arguments": {"query": "attention is all you need", "limit": 3},
+        })["result"]
+        text_blocks = [b for b in res["content"] if b["type"] == "text"]
+        assert text_blocks, "text content must survive for legacy clients"
+        assert res.get("structuredContent") is not None
+        assert json.loads(text_blocks[0]["text"]) == res["structuredContent"]
+
+
+def test_2026_era_stateless_request():
+    """Dual-era: a 2026-era client (no initialize handshake, envelope in
+    _meta) gets the same tool text a legacy-handshake client gets."""
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "era2026",
+                                               "version": "1.0"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    with MCPStdioClient() as modern:
+        res = modern.request("tools/call", {
+            "name": "get_research_method", "arguments": {}, "_meta": meta})
+        modern_text = parse_tool_text(res["result"])
+    with MCPStdioClient() as legacy:
+        legacy.handshake()
+        res = legacy.request("tools/call", {"name": "get_research_method",
+                                            "arguments": {}})
+        legacy_text = parse_tool_text(res["result"])
+    assert modern_text == legacy_text
+
+
+def test_prompts_and_prompt_used_telemetry(tmp_path):
+    """S6: the three workflow prompts are listed, render with arguments, and
+    fire prompt_used (prompt_name, has_args)."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            prompts = c.request("prompts/list")["result"]["prompts"]
+            names = {p["name"] for p in prompts}
+            assert names == {"literature-review", "verify-before-citing",
+                             "find-recent-work"}
+            lit = next(p for p in prompts if p["name"] == "literature-review")
+            args = {a["name"]: a.get("required", False)
+                    for a in lit.get("arguments", [])}
+            assert args == {"topic": True, "depth": False}
+
+            got = c.request("prompts/get", {
+                "name": "literature-review",
+                "arguments": {"topic": "sleep and memory consolidation",
+                              "depth": "quick"},
+            })["result"]
+            text = got["messages"][0]["content"]["text"]
+            assert "sleep and memory consolidation" in text
+            assert "intent" in text            # teaches the intent param
+            assert "interpreting-errors" in text  # teaches the skills loop
+
+            got = c.request("prompts/get", {"name": "find-recent-work"})
+            assert got["result"]["messages"], got
+
+            assert capture.wait_for_events(["prompt_used"]), \
+                capture.event_names()
+            used = [p["properties"] for p in capture.payloads
+                    if p["event"] == "prompt_used"]
+            assert {"literature-review", "find-recent-work"} <= \
+                {u["prompt_name"] for u in used}
+            by_name = {u["prompt_name"]: u for u in used}
+            assert by_name["literature-review"]["has_args"] is True
+            assert by_name["find-recent-work"]["has_args"] is False
+    finally:
+        capture.close()
+
+
+def test_skill_resources_and_resource_read_telemetry(tmp_path):
+    """S5: every skill is mirrored as a skill:// resource serving the same
+    content as skill_read, and reads fire resource_read (resource_uri)."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            resources = c.request("resources/list")["result"]["resources"]
+            uris = {r["uri"] for r in resources}
+            assert "skill://interpreting-errors" in uris
+
+            read = c.request("resources/read", {
+                "uri": "skill://interpreting-errors"}, timeout=30)["result"]
+            content = read["contents"][0]["text"]
+            assert "search_papers" in content
+
+            skill = c.request("tools/call", {
+                "name": "skill_read",
+                "arguments": {"name": "interpreting-errors"}}, timeout=30)
+            assert parse_result(skill["result"])["content"] == content, \
+                "resource mirror must serve exactly what skill_read serves"
+
+            assert capture.wait_for_events(["resource_read"]), \
+                capture.event_names()
+            reads = [p["properties"] for p in capture.payloads
+                     if p["event"] == "resource_read"]
+            assert any(r["resource_uri"] == "skill://interpreting-errors"
+                       for r in reads)
+    finally:
+        capture.close()
+
+
+def test_brief_version_on_validation_error(tmp_path):
+    """S3: a versioned brief tags its tool_executed with brief_version."""
+    capture = CaptureServer()
+    try:
+        with MCPStdioClient(env_extra={"HOME": str(tmp_path)},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            res = c.request("tools/call", {
+                "name": "get_paper",
+                "arguments": {"identifier": "whatever", "id_type": "bogus"}})
+            assert "error" in parse_result(res["result"])
+            assert capture.wait_for_events(["tool_executed"]), \
+                capture.event_names()
+            ex = [p["properties"] for p in capture.payloads
+                  if p["event"] == "tool_executed"][0]
+            assert ex["status"] == "error"
+            assert ex["brief_version"] == "papers-id-type-v1"
+    finally:
+        capture.close()
+
+
+def test_progress_messages_flagship(tmp_path):
+    """S8 FLAGSHIP: a progressToken on search_papers yields one
+    notifications/progress per upstream source with a human-readable
+    message; telemetry captures progress_updates_sent. No token -> no
+    notifications (zero cost). Offline via the unroutable proxy."""
+    capture = CaptureServer()
+    try:
+        env = {"HOME": str(tmp_path), **PROXY_ENV}
+        with MCPStdioClient(env_extra=env, telemetry_url=capture.url) as c:
+            c.handshake()
+            res, notes = c.request_full("tools/call", {
+                "name": "search_papers",
+                "arguments": {"query": "anything", "limit": 3},
+                "_meta": {"progressToken": "tok-1"},
+            }, timeout=90)
+            assert "error" not in res, res.get("error")
+            progress = [n["params"] for n in notes
+                        if n["method"] == "notifications/progress"]
+            assert len(progress) == 5, f"one update per source: {progress}"
+            assert all(p["progressToken"] == "tok-1" for p in progress)
+            messages = [p["message"] for p in progress]
+            assert all(m for m in messages)
+            assert any("pending:" in m for m in messages)
+            assert "all sources done" in messages[-1]
+            assert progress[-1]["progress"] == 5.0
+            assert progress[-1]["total"] == 5.0
+            # sources are named for the human, in fan-out order
+            assert messages[0].startswith("arXiv:")
+            assert messages[-1].startswith("PubMed:")
+
+            # zero-cost path: same call without a token -> no notifications
+            res, notes = c.request_full("tools/call", {
+                "name": "search_papers",
+                "arguments": {"query": "anything", "limit": 3},
+            }, timeout=90)
+            assert "error" not in res, res.get("error")
+            assert [n for n in notes
+                    if n["method"] == "notifications/progress"] == []
+
+            assert capture.wait_for_events(["tool_executed"]), \
+                capture.event_names()
+            ex = [p["properties"] for p in capture.payloads
+                  if p["event"] == "tool_executed"
+                  and p["properties"]["tool_name"] == "search_papers"]
+            assert len(ex) == 2
+            assert ex[0]["has_progress_token"] is True
+            assert ex[0]["progress_updates_sent"] == 5
+            assert ex[1]["has_progress_token"] is False
+            assert "progress_updates_sent" not in ex[1]
+    finally:
+        capture.close()
+
+
+def test_elicitation_s2_key_accept(tmp_path):
+    """S7: semanticscholar explicitly requested + skipped (rate limited) +
+    client declares form elicitation -> the server elicits the key, applies
+    it session-only, retries once. setup_flow fires; the key NEVER appears
+    in telemetry. Offline via the unroutable proxy (retry still fails ->
+    flow_outcome=still_failing)."""
+    capture = CaptureServer()
+    secret = "elicited-test-key-000111222333"
+    try:
+        env = {"HOME": str(tmp_path), **PROXY_ENV}
+        with MCPStdioClient(env_extra=env, telemetry_url=capture.url) as c:
+            c.handshake(capabilities={"elicitation": {"form": {}}})
+            seen = {}
+
+            def answer(method, params):
+                seen["method"] = method
+                seen["message"] = params.get("message", "")
+                return {"action": "accept", "content": {"api_key": secret}}
+
+            res, _ = c.request_full("tools/call", {
+                "name": "search_papers",
+                "arguments": {"query": "anything", "limit": 3,
+                              "sources": ["semanticscholar"]},
+            }, timeout=120, request_handler=answer)
+            assert "error" not in res, res.get("error")
+            assert seen["method"] == "elicitation/create"
+            assert "semanticscholar.org/product/api" in seen["message"]
+            assert "never written to disk" in seen["message"]
+
+            assert capture.wait_for_events(["setup_flow"]), \
+                capture.event_names()
+            flow = [p["properties"] for p in capture.payloads
+                    if p["event"] == "setup_flow"][0]
+            assert flow["flow_branch"] == "source_key"
+            assert flow["elicit_action"] == "accept"
+            assert flow["flow_outcome"] == "still_failing"  # proxy blocks retry
+
+            blob = json.dumps(capture.payloads)
+            assert secret not in blob, "elicited key leaked into telemetry"
+    finally:
+        capture.close()
+
+
+def test_elicitation_gated_off_without_capability(tmp_path):
+    """S7 gate: a client that does NOT declare elicitation gets today's
+    behavior exactly — skipped + hint, no elicitation request, no
+    setup_flow."""
+    capture = CaptureServer()
+    try:
+        env = {"HOME": str(tmp_path), **PROXY_ENV}
+        with MCPStdioClient(env_extra=env, telemetry_url=capture.url) as c:
+            c.handshake()  # capabilities: {}
+
+            def fail_on_request(method, params):
+                raise AssertionError(f"unexpected server request: {method}")
+
+            res, _ = c.request_full("tools/call", {
+                "name": "search_papers",
+                "arguments": {"query": "anything", "limit": 3,
+                              "sources": ["semanticscholar"]},
+            }, timeout=90, request_handler=fail_on_request)
+            assert "error" not in res, res.get("error")
+            data = parse_result(res["result"])
+            assert data["skipped"] and \
+                data["skipped"][0]["source"] == "semanticscholar"
+            assert capture.wait_for_events(["tool_executed"])
+            assert "setup_flow" not in capture.event_names()
+    finally:
+        capture.close()
+
+
+def test_retracted_paper_relay_block():
+    """S3/S4: a retracted paper (Wakefield 1998, stably flagged by OpenAlex)
+    returns the usual JSON data block PLUS one audience:["user"] relay block,
+    and its tool_executed carries brief_version papers-retracted-v1."""
+    capture = CaptureServer()
+    try:
+        import tempfile
+        with MCPStdioClient(env_extra={"HOME": tempfile.mkdtemp()},
+                            telemetry_url=capture.url) as c:
+            c.handshake()
+            res = c.request("tools/call", {
+                "name": "get_paper",
+                "arguments": {"identifier": "10.1016/S0140-6736(97)11096-0",
+                              "id_type": "doi", "include_references": False,
+                              "include_citations": False, "verify": True},
+            }, timeout=90)["result"]
+            blocks = res["content"]
+            data = json.loads(blocks[0]["text"])
+            if (data.get("verification") or {}).get("retracted") is not True:
+                pytest.skip("OpenAlex did not flag the fixture as retracted "
+                            "(offline or upstream change)")
+            assert len(blocks) == 2, "expected data block + relay block"
+            relay = blocks[1]
+            assert relay["annotations"]["audience"] == ["user"]
+            assert "RELAY TO THE USER" in relay["text"]
+            assert "retracted" in relay["text"]
+            # the data block parses exactly like a plain dict return
+            # (Crossref lowercases DOIs)
+            assert data["paper"]["doi"].lower() == \
+                "10.1016/s0140-6736(97)11096-0"
+
+            assert capture.wait_for_events(["tool_executed"]), \
+                capture.event_names()
+            ex = [p["properties"] for p in capture.payloads
+                  if p["event"] == "tool_executed"][0]
+            assert ex["status"] == "success"
+            assert ex["brief_version"] == "papers-retracted-v1"
+            assert ex["rows_returned"] == 1  # counts the data payload
     finally:
         capture.close()

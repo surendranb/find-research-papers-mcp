@@ -37,7 +37,8 @@ Error-shaped results are dicts with an `error` key:
 - `unknown id_type '...'` — fix `id_type` to one of: doi, arxiv, pmid,
   openalex, s2 (or use "auto").
 - `paper not found via <Source> (id_type=..., identifier=...)` — the owning
-  source has no record. Recovery: check the identifier for typos; if it was
+  source has no record; the message carries its own numbered recovery steps.
+  Retrying the same identifier will not help: check it for typos; if it was
   guessed by `id_type: auto`, pass the correct `id_type` explicitly; or
   search_papers for the title instead.
 
@@ -56,7 +57,9 @@ Successful results can still carry degraded legs, reported in `notes`:
 - `resolves: true` — landing page answers; `false` — 404/410, likely dead
   identifier; `null` — target offline or bot-blocked: say "could not
   verify", never claim the paper is dead.
-- `retracted: true` — never present the paper as valid evidence.
+- `retracted: true` — never present the paper as valid evidence. The result
+  additionally carries a `RELAY TO THE USER` text block (annotated
+  `audience: ["user"]`): pass it on to the human verbatim.
 - `retracted: null` — retraction status unknown (OpenAlex does not index
   it); absence of a flag is not proof of validity.
 

@@ -128,11 +128,35 @@ def verify_paper(paper: PaperHit) -> dict:
     return verification
 
 
+def _notify_progress(progress_callback, done: int, total: int,
+                     display_name: str, outcome: str,
+                     remaining: list[str]) -> None:
+    """Fire one human-readable fan-out progress update; never raises.
+
+    Message shape: "arXiv: 12 hits · pending: OpenAlex, PubMed"."""
+    if progress_callback is None:
+        return
+    try:
+        if remaining:
+            pending = ", ".join(SOURCES[n].display_name for n in remaining)
+            message = f"{display_name}: {outcome} · pending: {pending}"
+        else:
+            message = f"{display_name}: {outcome} · all sources done"
+        progress_callback(done, total, message)
+    except Exception:
+        pass
+
+
 def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
                year_from: int | None = None, year_to: int | None = None,
-               sort: str = "relevance", open_access_only: bool = False) -> dict:
+               sort: str = "relevance", open_access_only: bool = False,
+               progress_callback=None) -> dict:
     """Aggregate search. Returns {hits: [...], skipped: [...]} — skipped lists
-    sources that failed or are unconfigured, so callers can explain."""
+    sources that failed or are unconfigured, so callers can explain.
+
+    progress_callback: optional (done, total, message) callable invoked after
+    each source completes (queried, skipped, or failed). None (the default)
+    keeps the fan-out byte-for-byte on its historical path."""
     names = sources or list(SOURCES.keys())
     unknown = [n for n in names if n not in SOURCES]
     if unknown:
@@ -143,20 +167,29 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
     skipped: list[dict] = []
     queried: list[str] = []
     per_source_limit = max(limit, 1)
-    for name in names:
+    total = len(names)
+    for idx, name in enumerate(names, start=1):
         src = SOURCES[name]
         if not src.configured():
             skipped.append({"source": name, "reason": "key_required",
                             "hint": src.key_hint})
+            _notify_progress(progress_callback, idx, total, src.display_name,
+                             "skipped (API key required)", names[idx:])
             continue
         queried.append(name)
         try:
-            hits.extend(src.search(query, per_source_limit, year_from, year_to,
-                                   sort, open_access_only))
+            found = src.search(query, per_source_limit, year_from, year_to,
+                               sort, open_access_only)
+            hits.extend(found)
+            outcome = f"{len(found)} hits"
         except UnconfiguredError as e:
             skipped.append({"source": name, "reason": "key_required", "hint": str(e)})
+            outcome = "skipped (API key required)"
         except Exception as e:
             skipped.append({"source": name, "reason": "error", "detail": str(e)[:200]})
+            outcome = "failed"
+        _notify_progress(progress_callback, idx, total, src.display_name,
+                         outcome, names[idx:])
 
     # Round-robin across sources so one prolific source (e.g. arXiv on CS
     # topics) cannot monopolize a small result window — cross-source discovery
@@ -202,9 +235,20 @@ def get_paper(identifier: str, id_type: str = "auto",
     owner = SOURCES[ID_TYPE_SOURCE[resolved_type]]
     paper = owner.get(identifier, resolved_type)
     if paper is None:
+        # Two-audience brief (papers-not-found-v1): what happened, why a bare
+        # retry is wasted, then numbered recovery steps the model can act on
+        # or forward. Keep the historical first sentence verbatim — the
+        # 'interpreting-errors' skill and the error taxonomy key off it.
         return {
             "error": f"paper not found via {owner.display_name} "
-                     f"(id_type={resolved_type}, identifier={identifier})",
+                     f"(id_type={resolved_type}, identifier={identifier}). "
+                     "Retrying the same identifier will not help — this index "
+                     "has no record of it. What to do: "
+                     "(1) check the identifier for typos; "
+                     "(2) if id_type was 'auto', retry once with the correct "
+                     "explicit id_type (doi, arxiv, pmid, openalex, s2); "
+                     "(3) otherwise call search_papers with the paper's title "
+                     "keywords and use the id/doi from the matching hit.",
             "id_type": resolved_type,
         }
 

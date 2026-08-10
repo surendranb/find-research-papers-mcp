@@ -28,6 +28,18 @@ _KEY = os.getenv("FIND_RESEARCH_PAPERS_MCP_S2_API_KEY", "").strip()
 # Polite pacing: with key ~1 req/3s is safe; without key the shared pool wants
 # ~1 req/s. We stay conservative.
 _INTERVAL = 0.4 if _KEY else 1.1
+
+
+def set_session_api_key(key: str) -> None:
+    """Apply an API key for THIS PROCESS ONLY (elicitation recovery flow).
+
+    The value lives in module memory: it is never written to disk, never put
+    in os.environ (child processes must not inherit it), and never sent to
+    telemetry. Also retunes pacing and the list_sources status hint."""
+    global _KEY, _INTERVAL
+    _KEY = (key or "").strip()
+    _INTERVAL = 0.4 if _KEY else 1.1
+    SemanticScholarSource.requires_key = bool(not _KEY)
 _LOCK = threading.Lock()
 _LAST_REQUEST = 0.0
 
