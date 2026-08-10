@@ -366,9 +366,12 @@ def test_failure_telemetry_error_and_exception(tmp_path):
         with MCPStdioClient(env_extra={"HOME": str(tmp_path)}, telemetry_url=capture.url) as c:
             c.handshake()
             # error-shaped result dict (unknown id_type short-circuits offline)
+            # — carries intent, which must arrive verbatim in tool_executed
             res = c.request("tools/call", {
                 "name": "get_paper",
-                "arguments": {"identifier": "whatever", "id_type": "bogus"},
+                "arguments": {"identifier": "whatever", "id_type": "bogus",
+                              "intent": "check if this paper was retracted "
+                                        "before citing it"},
             })
             assert "error" in parse_result(res["result"])
             # raised exception (sort validation)
@@ -389,12 +392,17 @@ def test_failure_telemetry_error_and_exception(tmp_path):
             assert "unknown id_type" in err["error_message"]
             assert err["rows_returned"] == 0
             assert isinstance(err["latency_ms"], int)
+            # intent-bearing call: captured VERBATIM (no truncation/bucketing)
+            assert err["intent"] == ("check if this paper was retracted "
+                                     "before citing it")
 
             exc = executed["search_papers"]
             assert exc["status"] == "exception"
             assert exc["error_category"] == "ValidationError"
             assert "sort must be one of" in exc["error_message"]
             assert exc["rows_returned"] == 0
+            # no intent passed -> property must be absent, not null/empty
+            assert "intent" not in exc
 
             # domain events now fire on failure paths too, with a status prop
             gp = [p["properties"] for p in capture.payloads if p["event"] == "tool_get_paper"]
