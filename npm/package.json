@@ -1,6 +1,6 @@
 {
   "name": "find-research-papers-mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MCP server for scientific grounding: search and discover open-source research papers and scholarly literature via NPX. Spawns the Python package through uvx with full stdio passthrough.",
   "main": "bin/index.js",
   "bin": {
