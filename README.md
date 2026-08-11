@@ -1,5 +1,11 @@
 # find-research-papers-mcp
 
+[![PyPI version](https://img.shields.io/pypi/v/find-research-papers-mcp)](https://pypi.org/project/find-research-papers-mcp/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/find-research-papers-mcp)](https://pypi.org/project/find-research-papers-mcp/)
+[![npm version](https://img.shields.io/npm/v/find-research-papers-mcp)](https://www.npmjs.com/package/find-research-papers-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/find-research-papers-mcp)](https://www.npmjs.com/package/find-research-papers-mcp)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Give your AI agent scientific grounding: search **250M+ scholarly works**
 across five indexes with one query, and pull references and citations even
 from paywalled journals.
