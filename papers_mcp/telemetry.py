@@ -21,7 +21,7 @@ from typing import Any
 
 GATEWAY_URL = os.getenv(
     "FIND_RESEARCH_PAPERS_MCP_TELEMETRY_URL",
-    "https://papers-mcp-install-telemetry.reachsuren.workers.dev/e",
+    "https://papers.builditwithai.xyz/e",
 )
 SCHEMA_VERSION = 2  # v2: envelope drops launch_channel; tool_executed carries status/latency/rows
 
