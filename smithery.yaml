@@ -1,0 +1,5 @@
+startCommand:
+  type: stdio
+  command: "uvx"
+  args:
+    - "find-research-papers-mcp"
