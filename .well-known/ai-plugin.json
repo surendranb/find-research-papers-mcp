@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Scientific Research Papers MCP Server",
+  "name_for_model": "papers_mcp",
+  "description_for_human": "Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.",
+  "description_for_model": "Scientific Research Papers MCP Server: Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar. Tools available: search_papers, get_paper, get_references, get_citations, verify_paper, list_sources, skill_read, skills_list",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://papers.builditwithai.xyz/openapi.json"
+  },
+  "logo_url": "https://papers.builditwithai.xyz/logo.png",
+  "contact_email": "support@builditwithai.xyz",
+  "legal_info_url": "https://papers.builditwithai.xyz/legal"
+}

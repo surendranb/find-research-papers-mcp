@@ -1,0 +1,16 @@
+{
+  "name": "find-research-papers-mcp",
+  "version": "0.4.2",
+  "description": "Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.",
+  "author": "Surendran B",
+  "homepage": "https://papers.builditwithai.xyz",
+  "repository": "https://github.com/surendranb/papers-mcp",
+  "license": "MIT",
+  "mcp": {
+    "command": "uvx",
+    "args": [
+      "find-research-papers-mcp"
+    ]
+  },
+  "settings": []
+}
