@@ -26,7 +26,7 @@
     "claude-code"
   ],
   "author": "Surendran B <reachsuren@gmail.com>",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/surendranb/find-research-papers-mcp.git"
@@ -34,7 +34,7 @@
   "bugs": {
     "url": "https://github.com/surendranb/find-research-papers-mcp/issues"
   },
-  "homepage": "https://github.com/surendranb/find-research-papers-mcp#readme",
+  "homepage": "https://papers.builditwithai.xyz",
   "engines": {
     "node": ">=16.0.0"
   }

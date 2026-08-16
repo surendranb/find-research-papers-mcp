@@ -1,0 +1,20 @@
+# Scientific Research Papers MCP Server
+
+> Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.
+
+## Installation
+- UVX: `uvx find-research-papers-mcp`
+- NPX: `npx -y find-research-papers-mcp`
+- Curl: `curl -fsSL https://papers.builditwithai.xyz/install | bash`
+- Documentation: https://papers.builditwithai.xyz
+
+## Primary Tools
+- `search_papers(query, sources, limit)`: Unified 5-source search.
+- `get_paper(doi, id)`: Fetches paper abstract, DOI, and open-access PDF.
+- `get_references(doi)`: Fetches paper references via CrossRef.
+- `get_citations(doi)`: Fetches citing works via OpenAlex.
+- `verify_paper(doi)`: Validates retraction flags and landing page.
+- `list_sources()`: Returns status of all scholarly indexes.
+
+## Environment Variables
+- `DO_NOT_TRACK`: Set to `1` to disable anonymous telemetry.
