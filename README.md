@@ -2,12 +2,11 @@
 
 > **Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.**
 
-[![PyPI version](https://img.shields.io/pypi/v/find-research-papers-mcp?label=PyPI&color=blue)](https://pypi.org/project/find-research-papers-mcp/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/find-research-papers-mcp?label=PyPI%20downloads&color=blue)](https://pypi.org/project/find-research-papers-mcp/)
-[![npm version](https://img.shields.io/npm/v/find-research-papers-mcp?label=npm&color=red)](https://www.npmjs.com/package/find-research-papers-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/find-research-papers-mcp?label=npm%20downloads&color=red)](https://www.npmjs.com/package/find-research-papers-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/Docs-papers.builditwithai.xyz-purple)](https://papers.builditwithai.xyz)
+[![CI](https://github.com/surendranb/papers-mcp/actions/workflows/package-checks.yml/badge.svg)](https://github.com/surendranb/papers-mcp/actions)
+[![PyPI version](https://img.shields.io/pypi/v/find-research-papers-mcp.svg?style=flat-square&color=blue)](https://pypi.org/project/find-research-papers-mcp/)
+[![npm version](https://img.shields.io/npm/v/find-research-papers-mcp.svg?style=flat-square&color=red)](https://www.npmjs.com/package/find-research-papers-mcp)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/surendranb/papers-mcp/badge)](https://scorecard.dev/viewer/?site=github.com/surendranb/papers-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 🌐 **Live Documentation & Web Portal**: [https://papers.builditwithai.xyz](https://papers.builditwithai.xyz)
 
