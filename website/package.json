@@ -1,0 +1,14 @@
+{
+  "name": "papers-mcp-website",
+  "version": "1.0.0",
+  "description": "Scientific Research Papers MCP Server documentation website built with 11ty and Tailwind",
+  "scripts": {
+    "build": "npx @11ty/eleventy",
+    "watch": "npx @11ty/eleventy --watch",
+    "dev": "npx @11ty/eleventy --serve --port 8088"
+  },
+  "devDependencies": {
+    "@11ty/eleventy": "^3.1.6",
+    "markdown-it": "^14.1.0"
+  }
+}
