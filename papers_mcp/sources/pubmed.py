@@ -35,7 +35,7 @@ class PubMedSource(Source):
     def _esummary(self, ids: list[str]) -> dict:
         resp = requests.get(ESUMMARY, params={
             "db": "pubmed", "id": ",".join(ids), "retmode": "json",
-        }, headers=DEFAULT_HEADERS, timeout=25)
+        }, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         return resp.json().get("result", {})
 
@@ -105,7 +105,7 @@ class PubMedSource(Source):
             "retmode": "json",
             "sort": "pub date" if sort == "date" else "relevance",
         }
-        resp = requests.get(ESEARCH, params=params, headers=DEFAULT_HEADERS, timeout=25)
+        resp = requests.get(ESEARCH, params=params, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         return resp.json().get("esearchresult", {}).get("idlist", [])
 

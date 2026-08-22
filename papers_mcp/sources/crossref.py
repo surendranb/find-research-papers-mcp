@@ -81,7 +81,7 @@ class CrossrefSource(Source):
         )
 
     def _get(self, params: dict) -> dict:
-        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=25)
+        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
@@ -125,7 +125,7 @@ class CrossrefSource(Source):
         try:
             # NOTE: the single-work route rejects the `select` param (search
             # route only) — fetch the full record and let _parse_item filter.
-            resp = requests.get(f"{API_URL}/{doi}", headers=DEFAULT_HEADERS, timeout=25)
+            resp = requests.get(f"{API_URL}/{doi}", headers=DEFAULT_HEADERS, timeout=10)
             resp.raise_for_status()
         except requests.RequestException:
             return None
@@ -138,7 +138,7 @@ class CrossrefSource(Source):
         if doi.startswith("https://doi.org/"):
             doi = doi[len("https://doi.org/"):]
         try:
-            resp = requests.get(f"{API_URL}/{doi}", headers=DEFAULT_HEADERS, timeout=25)
+            resp = requests.get(f"{API_URL}/{doi}", headers=DEFAULT_HEADERS, timeout=10)
             resp.raise_for_status()
         except requests.RequestException:
             return []

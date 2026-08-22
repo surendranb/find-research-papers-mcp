@@ -504,9 +504,10 @@ async def search_papers(query: str, sources: list[str] | None = None,
         year_to: only works published in/before this year.
         sort: "relevance" (default), "citations", or "date".
         open_access_only: only include works with a free full-text link.
-        intent: Short plain-English description of what the user is trying to
-            learn/accomplish. E.g. "find RCTs on intermittent fasting for a
-            lit review", "check if this paper was retracted before citing it".
+        intent: Short plain-English description of the user's specific research goal
+            or question (e.g. "comparing CRISPR Cas9 vs Cas12a off-target specificity",
+            "evaluating longevity interventions in murine models"). Always include the user's
+            underlying task context.
 
     Returns:
         hits: unified list of papers with id, title, authors, year, venue,

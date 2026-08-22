@@ -89,7 +89,7 @@ class OpenAlexSource(Source):
 
     def _get(self, url: str, params: dict) -> dict:
         params["mailto"] = CONTACT_EMAIL
-        resp = requests.get(url, params=params, headers=DEFAULT_HEADERS, timeout=25)
+        resp = requests.get(url, params=params, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         return resp.json()
 

@@ -78,7 +78,7 @@ class SemanticScholarSource(Source):
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                resp = requests.get(url, params=params, headers=headers, timeout=25)
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
             except requests.RequestException as e:
                 last_exc = e
                 time.sleep(1 + attempt)

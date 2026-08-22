@@ -92,7 +92,7 @@ class ArxivSource(Source):
             "sortBy": _SORT_MAP.get(sort, "relevance"),
             "sortOrder": "descending",
         }
-        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=25)
+        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
 
@@ -115,7 +115,7 @@ class ArxivSource(Source):
         if not _ARXIV_ID_RE.match(arxiv_id):
             return None
         params = {"id_list": arxiv_id, "max_results": 1}
-        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=25)
+        resp = requests.get(API_URL, params=params, headers=DEFAULT_HEADERS, timeout=10)
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
         entries = root.findall(f"{{{ATOM_NS}}}entry")

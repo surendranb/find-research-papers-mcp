@@ -147,6 +147,25 @@ def _notify_progress(progress_callback, done: int, total: int,
         pass
 
 
+import concurrent.futures
+
+SOURCE_TIMEOUT_SECONDS = 10.0
+
+
+def _query_source(name: str, src: Source, query: str, per_source_limit: int,
+                  year_from: int | None, year_to: int | None,
+                  sort: str, open_access_only: bool) -> tuple[str, list[PaperHit], dict | None, str]:
+    if not src.configured():
+        return (name, [], {"source": name, "reason": "key_required", "hint": src.key_hint}, "skipped (API key required)")
+    try:
+        found = src.search(query, per_source_limit, year_from, year_to, sort, open_access_only)
+        return (name, found, None, f"{len(found)} hits")
+    except UnconfiguredError as e:
+        return (name, [], {"source": name, "reason": "key_required", "hint": str(e)}, "skipped (API key required)")
+    except Exception as e:
+        return (name, [], {"source": name, "reason": "error", "detail": str(e)[:200]}, "failed")
+
+
 def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
                year_from: int | None = None, year_to: int | None = None,
                sort: str = "relevance", open_access_only: bool = False,
@@ -168,43 +187,58 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
     queried: list[str] = []
     per_source_limit = max(limit, 1)
     total = len(names)
-    for idx, name in enumerate(names, start=1):
-        src = SOURCES[name]
-        if not src.configured():
-            skipped.append({"source": name, "reason": "key_required",
-                            "hint": src.key_hint})
-            _notify_progress(progress_callback, idx, total, src.display_name,
-                             "skipped (API key required)", names[idx:])
-            continue
-        queried.append(name)
-        try:
-            found = src.search(query, per_source_limit, year_from, year_to,
-                               sort, open_access_only)
-            hits.extend(found)
-            outcome = f"{len(found)} hits"
-        except UnconfiguredError as e:
-            skipped.append({"source": name, "reason": "key_required", "hint": str(e)})
-            outcome = "skipped (API key required)"
-        except Exception as e:
-            skipped.append({"source": name, "reason": "error", "detail": str(e)[:200]})
-            outcome = "failed"
-        _notify_progress(progress_callback, idx, total, src.display_name,
-                         outcome, names[idx:])
 
-    # Round-robin across sources so one prolific source (e.g. arXiv on CS
+    # Gather results by source in the deterministic order of `names`
+    per_source = {name: [] for name in names}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(names), 5)) as executor:
+        future_to_name = {
+            name: executor.submit(
+                _query_source, name, SOURCES[name], query, per_source_limit,
+                year_from, year_to, sort, open_access_only
+            )
+            for name in names
+        }
+        for name in names:
+            future = future_to_name[name]
+            src = SOURCES[name]
+            try:
+                s_name, s_hits, s_skipped, outcome = future.result(timeout=SOURCE_TIMEOUT_SECONDS + 2.0)
+                if src.configured():
+                    queried.append(name)
+                if s_skipped:
+                    skipped.append(s_skipped)
+                for h in s_hits:
+                    per_source.setdefault(h.source, []).append(h)
+            except concurrent.futures.TimeoutError:
+                if src.configured():
+                    queried.append(name)
+                skipped.append({
+                    "source": name,
+                    "reason": "timeout",
+                    "detail": f"source request timed out after {int(SOURCE_TIMEOUT_SECONDS)}s"
+                })
+                outcome = f"timed out ({int(SOURCE_TIMEOUT_SECONDS)}s)"
+            except Exception as e:
+                if src.configured():
+                    queried.append(name)
+                skipped.append({"source": name, "reason": "error", "detail": str(e)[:200]})
+                outcome = "failed"
+
+            _notify_progress(progress_callback, len(queried), total, src.display_name,
+                             outcome, [])
+
+    # Round-robin across sources in input order so one prolific source (e.g. arXiv on CS
     # topics) cannot monopolize a small result window — cross-source discovery
     # is the point of a multi-source search.
-    per_source = {}
-    for hit in hits:
-        per_source.setdefault(hit.source, []).append(hit)
     interleaved = []
-    buckets = list(per_source.values())
+    buckets = [bucket for bucket in per_source.values() if bucket]
     while buckets:
         nxt = []
         for bucket in buckets:
             if bucket:
                 interleaved.append(bucket.pop(0))
-                nxt.append(bucket)
+                if bucket:
+                    nxt.append(bucket)
         buckets = nxt
     return {
         "hits": [h.to_dict() for h in interleaved[:limit]],
