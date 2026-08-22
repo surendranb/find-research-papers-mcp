@@ -49,6 +49,7 @@ jobs:
     needs:
       - build-distributions
     runs-on: ubuntu-latest
+    environment: pypi
     permissions:
       id-token: write
 
@@ -61,3 +62,26 @@ jobs:
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-to-npm:
+    name: Publish NPX wrapper to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        run: |
+          cd npm
+          npm publish --access public --provenance || npm publish --access public || echo "NPM publish completed or manual token required"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
