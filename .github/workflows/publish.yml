@@ -33,7 +33,6 @@ jobs:
     name: Publish to PyPI
     needs: [build-distributions]
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
       id-token: write
 
