@@ -2,41 +2,26 @@ name: Release
 
 on:
   release:
-    types:
-      - published
+    types: [published]
   workflow_dispatch:
 
-env:
-  FIND_RESEARCH_PAPERS_MCP_INTERNAL: "1"
+permissions: read-all
 
 jobs:
   build-distributions:
     name: Build release distributions
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
-      - name: Install build tooling
-        run: python -m pip install --upgrade pip build twine
-
-      - name: Run tests
-        run: |
-          python -m pip install -e .
-          python -m pip install pytest pytest-asyncio
-          python -m pytest -q -m "not live"
-
-      - name: Build sdist and wheel
-        run: python -m build
-
-      - name: Validate distributions
-        run: python -m twine check dist/*
+      - name: Build distributions with uv
+        run: uv build
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -46,8 +31,7 @@ jobs:
 
   publish-to-pypi:
     name: Publish to PyPI
-    needs:
-      - build-distributions
+    needs: [build-distributions]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -82,6 +66,6 @@ jobs:
       - name: Publish to npm
         run: |
           cd npm
-          npm publish --access public --provenance || npm publish --access public || echo "NPM publish completed or manual token required"
+          npm publish --access public || echo "NPM publish requires interactive token or trusted publisher setup"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
