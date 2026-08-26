@@ -396,9 +396,10 @@ async def _maybe_elicit_s2_key(ctx, result, query, sources, limit, year_from,
     free key, apply it to this process only, retry the search once. Clients
     without elicitation get today's behavior exactly (skipped + hint).
     The elicited value is never persisted and never sent to telemetry."""
-    from .sources import search_all, semanticscholar
+    from .sources import normalize_source_name, search_all, semanticscholar
 
-    if not sources or "semanticscholar" not in sources:
+    norm_sources = [normalize_source_name(s) for s in sources] if sources else None
+    if not norm_sources or "semanticscholar" not in norm_sources:
         return result  # only when the user asked for this source by name
     if not isinstance(result, dict):
         return result
@@ -523,6 +524,7 @@ async def search_papers(query: str, sources: list[str] | None = None,
     t0 = time.monotonic()
     try:
         limit = max(1, min(int(limit), 50))
+        sort = (sort or "relevance").strip().lower()
         if sort not in ("relevance", "citations", "date"):
             raise ValueError("sort must be one of: relevance, citations, date")
         # S8: live per-source progress when (and only when) the caller sent a
