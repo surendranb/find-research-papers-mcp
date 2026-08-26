@@ -6,7 +6,15 @@ import json
 
 import pytest
 
-from papers_mcp.sources import SOURCES, guess_id_type, search_all
+from papers_mcp.sources import (
+    SOURCES,
+    get_paper,
+    get_source,
+    guess_id_type,
+    normalize_id_type,
+    normalize_source_name,
+    search_all,
+)
 from papers_mcp.sources.arxiv import ArxivSource, _norm_text
 from papers_mcp.sources.base import PaperHit
 from papers_mcp.sources.crossref import CrossrefSource, _strip_abstract
@@ -250,3 +258,128 @@ class TestSearchAllAggregation:
         assert sorted(sources[:3]) == ["arxiv", "crossref", "openalex"]
         assert sources[3] == "arxiv"
         assert result["sources_queried"] == ["arxiv", "openalex", "crossref"]
+
+    def test_sources_quirk_absorption_natural_casing(self, monkeypatch):
+        """Accepts official brand casing ('arXiv', 'PubMed', 'Semantic Scholar')."""
+        def mock_search(query, limit, year_from, year_to, sort, oa_only):
+            return []
+        monkeypatch.setattr(SOURCES["arxiv"], "search", mock_search)
+        monkeypatch.setattr(SOURCES["pubmed"], "search", mock_search)
+        result = search_all("test", sources=["arXiv", "PubMed"], limit=5)
+        assert result["sources_queried"] == ["arxiv", "pubmed"]
+
+    def test_sources_quirk_absorption_string_and_dashes(self, monkeypatch):
+        """Accepts comma-separated string and dashed variations."""
+        def mock_search(query, limit, year_from, year_to, sort, oa_only):
+            return []
+        monkeypatch.setattr(SOURCES["semanticscholar"], "search", mock_search)
+        monkeypatch.setattr(SOURCES["openalex"], "search", mock_search)
+        result = search_all("test", sources="semantic-scholar, open_alex", limit=5)
+        assert result["sources_queried"] == ["semanticscholar", "openalex"]
+
+    def test_sources_deduplication(self, monkeypatch):
+        """Deduplicates normalized aliases to avoid duplicate API calls."""
+        def mock_search(query, limit, year_from, year_to, sort, oa_only):
+            return []
+        monkeypatch.setattr(SOURCES["arxiv"], "search", mock_search)
+        result = search_all("test", sources=["arXiv", "arxiv", "ARXIV"], limit=5)
+        assert result["sources_queried"] == ["arxiv"]
+
+
+class TestNormalizeSourceName:
+    @pytest.mark.parametrize("raw,expected", [
+        ("arxiv", "arxiv"),
+        ("arXiv", "arxiv"),
+        ("ARXIV", "arxiv"),
+        ("  arXiv  ", "arxiv"),
+        ("pubmed", "pubmed"),
+        ("PubMed", "pubmed"),
+        ("PUBMED", "pubmed"),
+        ("ncbi", "pubmed"),
+        ("pmc", "pubmed"),
+        ("semanticscholar", "semanticscholar"),
+        ("Semantic Scholar", "semanticscholar"),
+        ("semantic-scholar", "semanticscholar"),
+        ("semantic_scholar", "semanticscholar"),
+        ("SemanticScholar", "semanticscholar"),
+        ("s2", "semanticscholar"),
+        ("openalex", "openalex"),
+        ("OpenAlex", "openalex"),
+        ("open-alex", "openalex"),
+        ("open_alex", "openalex"),
+        ("crossref", "crossref"),
+        ("CrossRef", "crossref"),
+        ("cross-ref", "crossref"),
+        ("cross_ref", "crossref"),
+        ("unknown_source", None),
+        ("", None),
+        (None, None),
+    ])
+    def test_normalize_source_name(self, raw, expected):
+        assert normalize_source_name(raw) == expected
+
+
+class TestNormalizeIdType:
+    @pytest.mark.parametrize("raw,expected", [
+        ("doi", "doi"),
+        ("DOI", "doi"),
+        ("arxiv", "arxiv"),
+        ("arXiv", "arxiv"),
+        ("pmid", "pmid"),
+        ("PMID", "pmid"),
+        ("pubmed", "pmid"),
+        ("openalex", "openalex"),
+        ("OpenAlex", "openalex"),
+        ("open-alex", "openalex"),
+        ("s2", "s2"),
+        ("S2", "s2"),
+        ("semanticscholar", "s2"),
+        ("semantic-scholar", "s2"),
+        ("semantic scholar", "s2"),
+        ("auto", "auto"),
+        ("AUTO", "auto"),
+        (None, "auto"),
+        ("", "auto"),
+        ("unknown_type", "unknown_type"),
+    ])
+    def test_normalize_id_type(self, raw, expected):
+        assert normalize_id_type(raw) == expected
+
+
+class TestGetSourceQuirkAbsorption:
+    def test_get_source_with_casing(self):
+        assert get_source("arXiv") is SOURCES["arxiv"]
+        assert get_source("PubMed") is SOURCES["pubmed"]
+        assert get_source("Semantic Scholar") is SOURCES["semanticscholar"]
+        assert get_source("invalid_xyz") is None
+
+
+class TestGetPaperQuirkAbsorption:
+    def test_get_paper_normalizes_id_type(self, monkeypatch):
+        fake_hit = PaperHit(source="arxiv", id="1706.03762", title="Attention", url="x")
+        monkeypatch.setattr(SOURCES["arxiv"], "get", lambda ident, id_type: fake_hit)
+        res = get_paper("1706.03762", id_type="arXiv", verify=False)
+        assert "error" not in res
+        assert res["paper"]["id"] == "1706.03762"
+        assert res["id_type"] == "arxiv"
+
+    def test_get_paper_invalid_id_type_message(self):
+        res = get_paper("12345", id_type="INVALID_TYPE", verify=False)
+        assert "error" in res
+        assert "unknown id_type 'INVALID_TYPE'" in res["error"]
+
+
+class TestServerToolQuirkAbsorption:
+    @pytest.mark.asyncio
+    async def test_search_papers_natural_casing_and_sort(self, monkeypatch):
+        from papers_mcp.server import search_papers
+
+        def mock_search(query, limit, year_from, year_to, sort, oa_only):
+            return [PaperHit(source="arxiv", id="1", title="Title", url="u")]
+
+        monkeypatch.setattr(SOURCES["arxiv"], "search", mock_search)
+        result = await search_papers("quantum", sources=["arXiv"], sort="Relevance")
+        assert len(result["hits"]) == 1
+        assert result["sources_queried"] == ["arxiv"]
+
+

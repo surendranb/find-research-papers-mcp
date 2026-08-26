@@ -34,6 +34,72 @@ ID_TYPE_SOURCE = {
     "s2": "semanticscholar",
 }
 
+# Quirk absorption: map common model casings and punctuation to canonical keys
+_SOURCE_ALIASES: dict[str, str] = {
+    "arxiv": "arxiv",
+    "openalex": "openalex",
+    "open-alex": "openalex",
+    "open_alex": "openalex",
+    "open alex": "openalex",
+    "crossref": "crossref",
+    "cross-ref": "crossref",
+    "cross_ref": "crossref",
+    "cross ref": "crossref",
+    "semanticscholar": "semanticscholar",
+    "semantic-scholar": "semanticscholar",
+    "semantic_scholar": "semanticscholar",
+    "semantic scholar": "semanticscholar",
+    "s2": "semanticscholar",
+    "pubmed": "pubmed",
+    "ncbi": "pubmed",
+    "pmc": "pubmed",
+}
+
+_ID_TYPE_ALIASES: dict[str, str] = {
+    "doi": "doi",
+    "arxiv": "arxiv",
+    "pmid": "pmid",
+    "pubmed": "pmid",
+    "openalex": "openalex",
+    "s2": "s2",
+    "semanticscholar": "s2",
+    "semantic-scholar": "s2",
+    "semantic_scholar": "s2",
+    "semantic scholar": "s2",
+    "auto": "auto",
+}
+
+
+def normalize_source_name(name: str) -> str | None:
+    """Normalize a source name to its canonical key in SOURCES (quirk absorption)."""
+    if not isinstance(name, str) or not name.strip():
+        return None
+    raw = name.strip().lower()
+    if raw in _SOURCE_ALIASES:
+        return _SOURCE_ALIASES[raw]
+    collapsed = re.sub(r"[\s\-_.]", "", raw)
+    if collapsed in _SOURCE_ALIASES:
+        return _SOURCE_ALIASES[collapsed]
+    if collapsed in SOURCES:
+        return collapsed
+    return None
+
+
+def normalize_id_type(id_type: str | None) -> str:
+    """Normalize an id_type to its canonical key in ID_TYPE_SOURCE or 'auto'."""
+    if not id_type:
+        return "auto"
+    if not isinstance(id_type, str):
+        return str(id_type)
+    raw = id_type.strip().lower()
+    if raw in _ID_TYPE_ALIASES:
+        return _ID_TYPE_ALIASES[raw]
+    collapsed = re.sub(r"[\s\-_.]", "", raw)
+    if collapsed in _ID_TYPE_ALIASES:
+        return _ID_TYPE_ALIASES[collapsed]
+    return raw
+
+
 _DOI_RE = re.compile(r"^10\.\d{4,9}/")
 _ARXIV_NEW_RE = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$")
 _ARXIV_OLD_RE = re.compile(r"^[a-z-]+(?:\.[a-z-]+)*/\d{7}(?:v\d+)?$")
@@ -66,7 +132,8 @@ def guess_id_type(identifier: str) -> str:
 
 
 def get_source(name: str) -> Source | None:
-    return SOURCES.get(name)
+    norm = normalize_source_name(name)
+    return SOURCES.get(norm) if norm else None
 
 
 def list_sources() -> list[dict]:
@@ -166,7 +233,7 @@ def _query_source(name: str, src: Source, query: str, per_source_limit: int,
         return (name, [], {"source": name, "reason": "error", "detail": str(e)[:200]}, "failed")
 
 
-def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
+def search_all(query: str, sources: list[str] | str | None = None, limit: int = 10,
                year_from: int | None = None, year_to: int | None = None,
                sort: str = "relevance", open_access_only: bool = False,
                progress_callback=None) -> dict:
@@ -176,11 +243,24 @@ def search_all(query: str, sources: list[str] | None = None, limit: int = 10,
     progress_callback: optional (done, total, message) callable invoked after
     each source completes (queried, skipped, or failed). None (the default)
     keeps the fan-out byte-for-byte on its historical path."""
-    names = sources or list(SOURCES.keys())
-    unknown = [n for n in names if n not in SOURCES]
-    if unknown:
-        raise ValueError(
-            f"unknown source(s): {', '.join(unknown)}. Known: {', '.join(SOURCES)}")
+    if isinstance(sources, str):
+        sources = [s.strip() for s in sources.split(",") if s.strip()]
+
+    if sources:
+        names: list[str] = []
+        unknown: list[str] = []
+        for s in sources:
+            norm = normalize_source_name(s)
+            if norm and norm in SOURCES:
+                if norm not in names:
+                    names.append(norm)
+            else:
+                unknown.append(str(s))
+        if unknown:
+            raise ValueError(
+                f"unknown source(s): {', '.join(unknown)}. Known: {', '.join(SOURCES)}")
+    else:
+        names = list(SOURCES.keys())
 
     hits: list[PaperHit] = []
     skipped: list[dict] = []
@@ -261,10 +341,12 @@ def get_paper(identifier: str, id_type: str = "auto",
     the landing page plus OpenAlex retraction flag when the owner does not
     track it. A dead/unknown target never fails the paper — it is reported.
     """
-    resolved_type = guess_id_type(identifier) if id_type == "auto" else id_type
+    normalized_type = normalize_id_type(id_type)
+    resolved_type = guess_id_type(identifier) if normalized_type == "auto" else normalized_type
     if resolved_type not in ID_TYPE_SOURCE:
-        return {"error": f"unknown id_type '{resolved_type}'. "
-                         f"Use one of: {', '.join(ID_TYPE_SOURCE)}"}
+        return {"error": f"unknown id_type '{id_type}'. "
+                         f"Use one of: auto, {', '.join(ID_TYPE_SOURCE)}",
+                "id_type": id_type}
 
     owner = SOURCES[ID_TYPE_SOURCE[resolved_type]]
     paper = owner.get(identifier, resolved_type)
