@@ -3,4 +3,4 @@
 """find-research-papers-mcp: search & discover scholarly literature across arXiv, Semantic
 Scholar, OpenAlex, Crossref, and PubMed."""
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"

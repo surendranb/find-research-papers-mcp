@@ -20,12 +20,26 @@ else:  # pydantic requires typing_extensions.TypedDict on <3.12
 import pydantic_core
 from pydantic import BaseModel, Field
 
+import requests
+
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.types import Annotations, CallToolResult, TextContent, ToolAnnotations
 
 from . import telemetry
 from .telemetry import send_telemetry
+from . import sources
+from .sources import (
+    SOURCES,
+    get_paper as _get_paper,
+    get_source,
+    guess_id_type,
+    list_sources as _list_sources,
+    normalize_id_type,
+    normalize_source_name,
+    search_all,
+    semanticscholar,
+)
 
 SERVER_NAME = "find-research-papers-mcp"
 WEBSITE_URL = "https://github.com/surendranb/find-research-papers-mcp"
@@ -195,7 +209,6 @@ def _categorize_exception(exc: BaseException) -> str:
     if name == "UnconfiguredError":
         return "AuthError"
     try:
-        import requests
         if isinstance(exc, requests.RequestException):
             return "APIError"
     except Exception:
@@ -345,8 +358,6 @@ async def _search_all_with_progress(ctx, query, sources, limit, year_from,
     a progressToken — no token means the historical direct call (zero cost)."""
     import anyio
 
-    from .sources import search_all
-
     sent = {"n": 0}
 
     def _on_source_done(done: int, total: int, message: str) -> None:
@@ -396,8 +407,6 @@ async def _maybe_elicit_s2_key(ctx, result, query, sources, limit, year_from,
     free key, apply it to this process only, retry the search once. Clients
     without elicitation get today's behavior exactly (skipped + hint).
     The elicited value is never persisted and never sent to telemetry."""
-    from .sources import normalize_source_name, search_all, semanticscholar
-
     norm_sources = [normalize_source_name(s) for s in sources] if sources else None
     if not norm_sources or "semanticscholar" not in norm_sources:
         return result  # only when the user asked for this source by name
@@ -519,8 +528,6 @@ async def search_papers(query: str, sources: list[str] | None = None,
     'interpreting-errors' skill (skill_read) for what each shape means and
     how to recover.
     """
-    from .sources import search_all
-
     t0 = time.monotonic()
     try:
         limit = max(1, min(int(limit), 50))
@@ -625,8 +632,6 @@ async def get_paper(identifier: str, id_type: str = "auto",
     On an error-shaped result ({"error": ...}) or unexpected notes, read the
     'interpreting-errors' skill (skill_read) before retrying or giving up.
     """
-    from .sources import get_paper as _get_paper
-
     t0 = time.monotonic()
     result = _get_paper(identifier, id_type, include_references,
                         include_citations, verify)
@@ -734,9 +739,7 @@ async def get_research_method() -> dict:
 async def list_sources() -> list[dict]:
     """List every scholarly source the server can search: coverage, whether an
     API key is needed, rate limits, and whether it is currently configured."""
-    from .sources import list_sources as _list
-
-    listed = _list()
+    listed = _list_sources()
     # tools_listed now fires from the real protocol tools/list handler (with
     # tool_count) — the mislabeled copy that fired here was moved, not lost.
     send_telemetry("tool_list_sources", {"sources_count": len(listed)})
@@ -778,8 +781,6 @@ def _fetch_skill_content(name: str) -> tuple[str | None, bool]:
     source-checkout fallback. Returns (content, fetch_ok) where fetch_ok is
     True only for a live GitHub fetch — shared by skill_read and the
     skill:// resource mirrors so both serve identical content."""
-    import requests
-
     content = None
     fetch_ok = False
     try:
