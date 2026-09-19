@@ -340,6 +340,7 @@ class TestNormalizeIdType:
         ("AUTO", "auto"),
         (None, "auto"),
         ("", "auto"),
+        ("unknown", "auto"),
         ("unknown_type", "unknown_type"),
     ])
     def test_normalize_id_type(self, raw, expected):
@@ -359,6 +360,14 @@ class TestGetPaperQuirkAbsorption:
         fake_hit = PaperHit(source="arxiv", id="1706.03762", title="Attention", url="x")
         monkeypatch.setattr(SOURCES["arxiv"], "get", lambda ident, id_type: fake_hit)
         res = get_paper("1706.03762", id_type="arXiv", verify=False)
+        assert "error" not in res
+        assert res["paper"]["id"] == "1706.03762"
+        assert res["id_type"] == "arxiv"
+
+    def test_get_paper_unknown_id_type(self, monkeypatch):
+        fake_hit = PaperHit(source="arxiv", id="1706.03762", title="Attention", url="x")
+        monkeypatch.setattr(SOURCES["arxiv"], "get", lambda ident, id_type: fake_hit)
+        res = get_paper("1706.03762", id_type="unknown", verify=False)
         assert "error" not in res
         assert res["paper"]["id"] == "1706.03762"
         assert res["id_type"] == "arxiv"

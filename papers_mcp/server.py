@@ -547,12 +547,6 @@ async def search_papers(query: str, sources: list[str] | None = None,
             result = search_all(query, sources, limit, year_from, year_to,
                                 sort, open_access_only)
     except Exception:
-        # Failure path for the domain event too (tool_executed carries the
-        # full error taxonomy; this keeps tool_search analyzable end-to-end).
-        send_telemetry("tool_search", {
-            "status": "exception",
-            "latency_ms": int((time.monotonic() - t0) * 1000),
-        })
         raise
     # S7: skip-moment key recovery — never allowed to affect the call.
     try:
@@ -561,15 +555,12 @@ async def search_papers(query: str, sources: list[str] | None = None,
             open_access_only)
     except Exception:
         pass
-    send_telemetry("tool_search", {
-        "status": "success",
-        "hits_count": len(result["hits"]),
-        "sources_used": len(result["sources_queried"]),
-        "skipped": len(result["skipped"]),
-        "skipped_reasons": list({s["reason"] for s in result["skipped"]}),
-        "latency_ms": int((time.monotonic() - t0) * 1000),
-        "retracted_hits_count": sum(1 for h in result["hits"] if h.get("retracted")),
-    })
+    hits = result.get("hits") or []
+    _call_extra("hits_count", len(hits))
+    _call_extra("sources_used", len(result.get("sources_queried") or []))
+    _call_extra("skipped", len(result.get("skipped") or []))
+    _call_extra("skipped_reasons", list({s["reason"] for s in (result.get("skipped") or [])}))
+    _call_extra("retracted_hits_count", sum(1 for h in hits if h.get("retracted")))
     return result
 
 
@@ -632,31 +623,16 @@ async def get_paper(identifier: str, id_type: str = "auto",
     On an error-shaped result ({"error": ...}) or unexpected notes, read the
     'interpreting-errors' skill (skill_read) before retrying or giving up.
     """
-    t0 = time.monotonic()
     result = _get_paper(identifier, id_type, include_references,
                         include_citations, verify)
-    if "error" in result:
-        # Failure path — previously skipped entirely (errors were invisible).
-        send_telemetry("tool_get_paper", {
-            "status": "error",
-            "id_type": result.get("id_type"),
-            "included_refs": include_references,
-            "included_cites": include_citations,
-            "verified": verify,
-            "latency_ms": int((time.monotonic() - t0) * 1000),
-        })
-    else:
+    _call_extra("id_type", result.get("id_type"))
+    _call_extra("included_refs", include_references)
+    _call_extra("included_cites", include_citations)
+    _call_extra("verified", verify)
+    if "error" not in result:
         verification = result.get("verification") or {}
-        send_telemetry("tool_get_paper", {
-            "status": "success",
-            "id_type": result.get("id_type"),
-            "included_refs": include_references,
-            "included_cites": include_citations,
-            "verified": verify,
-            "resolves": verification.get("resolves"),
-            "retracted": verification.get("retracted"),
-            "latency_ms": int((time.monotonic() - t0) * 1000),
-        })
+        _call_extra("resolves", verification.get("resolves"))
+        _call_extra("retracted", verification.get("retracted"))
     # S3/S4: a retracted paper additionally carries the relay block for the
     # human (the data block stays byte-identical to a plain dict return).
     try:
@@ -728,7 +704,6 @@ async def get_research_method() -> dict:
     Returns:
         method: {tiers, rules, quirks, verify_steps, retraction_note}.
     """
-    send_telemetry("tool_get_research_method", {})
     return {"method": RESEARCH_METHOD}
 
 
@@ -740,9 +715,7 @@ async def list_sources() -> list[dict]:
     """List every scholarly source the server can search: coverage, whether an
     API key is needed, rate limits, and whether it is currently configured."""
     listed = _list_sources()
-    # tools_listed now fires from the real protocol tools/list handler (with
-    # tool_count) — the mislabeled copy that fired here was moved, not lost.
-    send_telemetry("tool_list_sources", {"sources_count": len(listed)})
+    _call_extra("sources_count", len(listed))
     return listed
 
 
@@ -816,14 +789,15 @@ async def skill_read(name: str) -> dict:
     Returns:
         name, content — or an error if the skill does not exist.
     """
+    _call_extra("skill_name", name)
     if name not in SKILLS_REGISTRY:
-        send_telemetry("skill_read", {"skill_name": name, "fetch_ok": False})
+        _call_extra("fetch_ok", False)
         return {"error": f"Skill '{name}' not found. Call skills_list to see "
                          f"available skills."}
 
     content, fetch_ok = _fetch_skill_content(name)
 
-    send_telemetry("skill_read", {"skill_name": name, "fetch_ok": fetch_ok})
+    _call_extra("fetch_ok", fetch_ok)
     if content is None:
         return {"error": f"Skill '{name}' is temporarily unavailable (fetch "
                          f"failed and no local copy). Proceed with the tool "

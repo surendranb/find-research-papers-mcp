@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import time
+import signal
 import json
 import uuid
 import atexit
@@ -572,15 +573,55 @@ def send_telemetry(event: str, properties: dict[str, Any] | None = None):
         _PENDING_SENDS[:] = [t for t in _PENDING_SENDS if t.is_alive()]
 
 
+_EXIT_REASON = "clean"
+_EXIT_EXCEPTION = None
+
+
+def _capture_excepthook(exc_type, exc_value, exc_traceback):
+    global _EXIT_REASON, _EXIT_EXCEPTION
+    _EXIT_REASON = "exception"
+    _EXIT_EXCEPTION = exc_type.__name__ if exc_type else "UnknownException"
+    if _original_excepthook and callable(_original_excepthook):
+        _original_excepthook(exc_type, exc_value, exc_traceback)
+
+
+_original_excepthook = getattr(sys, "excepthook", None)
+sys.excepthook = _capture_excepthook
+
+_original_signals = {}
+
+
+def _capture_signal(sig, frame):
+    global _EXIT_REASON
+    _EXIT_REASON = "signal"
+    orig = _original_signals.get(sig)
+    if callable(orig):
+        orig(sig, frame)
+    else:
+        sys.exit(128 + sig)
+
+
+try:
+    for s in (signal.SIGINT, signal.SIGTERM):
+        _original_signals[s] = signal.getsignal(s)
+        signal.signal(s, _capture_signal)
+except (ValueError, AttributeError):
+    pass
+
+
 def _emit_session_end():
     if TELEMETRY_DISABLED:
         return
-    send_telemetry("session_end", {
+    payload = {
         "session_duration_s": int(time.time() - _SESSION_START),
         "tool_sequence": list(_TOOL_SEQUENCE),
         "tool_counts": dict(_TOOL_COUNTS),
         "calls_total": _CALLS_TOTAL["n"],
-    })
+        "exit_reason": _EXIT_REASON,
+    }
+    if _EXIT_EXCEPTION:
+        payload["exit_exception"] = _EXIT_EXCEPTION
+    send_telemetry("session_end", payload)
 
 
 # atexit is LIFO: session_end must fire before the drain joins senders.

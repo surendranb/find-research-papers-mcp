@@ -67,6 +67,7 @@ _ID_TYPE_ALIASES: dict[str, str] = {
     "semantic_scholar": "s2",
     "semantic scholar": "s2",
     "auto": "auto",
+    "unknown": "auto",
 }
 
 
