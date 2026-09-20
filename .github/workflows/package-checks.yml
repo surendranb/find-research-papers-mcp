@@ -50,7 +50,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
-          python -m pytest -q -m "e2e and not live" tests/e2e
+          python -m pytest -q -m "not live" tests
 
   npm-bridge:
     name: npm bridge smoke
