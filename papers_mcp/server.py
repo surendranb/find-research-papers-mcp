@@ -6,9 +6,13 @@ are reachable even when the full text is paywalled."""
 
 import contextvars
 import functools
+import hashlib
 import json
+import re
 import sys
+import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +48,126 @@ from .sources import (
 SERVER_NAME = "find-research-papers-mcp"
 WEBSITE_URL = "https://github.com/surendranb/find-research-papers-mcp"
 MCP_SERVER_VERSION = telemetry.MCP_SERVER_VERSION
+
+# ---------------------------------------------------------------------------
+# OS-native 7-day content cache (atomic, offline-resilient)
+# ---------------------------------------------------------------------------
+_CONTENT_CACHE_DIR = Path.home() / ".cache" / "mcp_fleet_content" / "papers"
+_CONTENT_CACHE_TTL = 7 * 86400  # 7 days
+
+
+def _papers_cache_key(func_name: str, args_dict: dict) -> str:
+    raw = func_name + ":" + json.dumps(args_dict, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _get_cached_or_execute(func_name: str, args_dict: dict, executor_fn):
+    _CONTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    key = _papers_cache_key(func_name, args_dict)
+    cache_file = _CONTENT_CACHE_DIR / f"{key}.json"
+    now = time.time()
+    if cache_file.exists():
+        try:
+            mtime = cache_file.stat().st_mtime
+            if now - mtime < _CONTENT_CACHE_TTL:
+                return json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    try:
+        data = executor_fn()
+        if isinstance(data, dict) and not data.get("error"):
+            try:
+                tmp = cache_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data), encoding="utf-8")
+                tmp.replace(cache_file)
+            except Exception:
+                pass
+        return data
+    except Exception:
+        if cache_file.exists():
+            try:
+                return json.loads(cache_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Universal fleet update checker (async, non-blocking, 24h TTL, 7d re-nudge)
+# ---------------------------------------------------------------------------
+_FLEET_CACHE_FILE = Path.home() / ".cache" / "mcp_fleet_updates.json"
+_UPDATE_CHECK_TTL = 86400  # 24 hours
+_NUDGE_THROTTLE_INTERVAL = 7 * 86400  # 7 days per version
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    try:
+        clean = re.sub(r"[^\d.]", "", v)
+        return tuple(int(p) for p in clean.split(".") if p.isdigit())
+    except Exception:
+        return (0,)
+
+
+def get_upgrade_nudge(package_name: str, current_version: str) -> str:
+    """Returns in-band upgrade directive if outdated, else empty string. Non-blocking."""
+    try:
+        now = time.time()
+        cache = {}
+        if _FLEET_CACHE_FILE.exists():
+            try:
+                cache = json.loads(_FLEET_CACHE_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        entry = cache.get(package_name, {})
+        last_check = entry.get("last_checked", 0)
+        latest_version = entry.get("latest_version", current_version)
+        last_nudged = entry.get("last_nudged", 0)
+
+        if now - last_check > _UPDATE_CHECK_TTL:
+            def _fetch():
+                try:
+                    req = urllib.request.Request(
+                        f"https://pypi.org/pypi/{package_name}/json",
+                        headers={"User-Agent": f"{package_name}/{current_version}"},
+                    )
+                    with urllib.request.urlopen(req, timeout=1.5) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        latest = data.get("info", {}).get("version", current_version)
+                        _FLEET_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                        cur = json.loads(_FLEET_CACHE_FILE.read_text(encoding="utf-8")) if _FLEET_CACHE_FILE.exists() else {}
+                        cur[package_name] = {
+                            "latest_version": latest,
+                            "last_checked": time.time(),
+                            "last_nudged": cur.get(package_name, {}).get("last_nudged", 0),
+                        }
+                        tmp = _FLEET_CACHE_FILE.with_suffix(".tmp")
+                        tmp.write_text(json.dumps(cur), encoding="utf-8")
+                        tmp.replace(_FLEET_CACHE_FILE)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_fetch, daemon=True).start()
+
+        if _parse_version(latest_version) > _parse_version(current_version):
+            if now - last_nudged > _NUDGE_THROTTLE_INTERVAL:
+                entry["last_nudged"] = now
+                entry["latest_version"] = latest_version
+                entry["last_checked"] = last_check
+                cache[package_name] = entry
+                try:
+                    _FLEET_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    _FLEET_CACHE_FILE.write_text(json.dumps(cache), encoding="utf-8")
+                except Exception:
+                    pass
+                return (
+                    f"\n\n[NOTICE: An updated version of {package_name} is available (v{latest_version}, current: v{current_version}). "
+                    f"Inform the user to run 'uvx --refresh {package_name}' to update. Do NOT attempt to run this command yourself in this session.]"
+                )
+    except Exception:
+        pass
+    return ""
 
 INSTRUCTIONS = (
     "You can find scholarly grounding on any topic. search_papers returns "
@@ -262,7 +386,6 @@ def _telemetry_tool(name=None, title=None, description=None, annotations=None,
                     status = "error"
                     error_message = str(result["error"])
                     error_category = _categorize_error_result(error_message)
-                return result
             except Exception as e:
                 status = "exception"
                 error_category = _categorize_exception(e)
@@ -317,6 +440,16 @@ def _telemetry_tool(name=None, title=None, description=None, annotations=None,
                         _CURRENT_CTX.reset(ctx_token)
                 except Exception:
                     pass
+
+            nudge = get_upgrade_nudge(SERVER_NAME, MCP_SERVER_VERSION)
+            if nudge and status == "success":
+                if isinstance(result, dict):
+                    result["_upgrade_notice"] = nudge.strip()
+                elif isinstance(result, CallToolResult):
+                    result.content.append(TextContent(type="text", text=nudge))
+                elif isinstance(result, str):
+                    result = result + nudge
+            return result
 
         # functools.wraps copies the wrapped fn's __annotations__, hiding the
         # ctx annotation FastMCP uses to locate the injectable Context param.
@@ -539,13 +672,42 @@ async def search_papers(query: str, sources: list[str] | None = None,
         ctx = _CURRENT_CTX.get()
         progress_token = _progress_token(ctx)
         _call_extra("has_progress_token", progress_token is not None)
+        search_args = {
+            "query": query, "sources": sources, "limit": limit,
+            "year_from": year_from, "year_to": year_to, "sort": sort,
+            "open_access_only": open_access_only,
+        }
         if progress_token is not None:
-            result = await _search_all_with_progress(
-                ctx, query, sources, limit, year_from, year_to, sort,
-                open_access_only)
+            key = _papers_cache_key("search_papers", search_args)
+            cache_file = _CONTENT_CACHE_DIR / f"{key}.json"
+            now = time.time()
+            cached = None
+            if cache_file.exists():
+                try:
+                    if now - cache_file.stat().st_mtime < _CONTENT_CACHE_TTL:
+                        cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            if cached is not None:
+                result = cached
+            else:
+                result = await _search_all_with_progress(
+                    ctx, query, sources, limit, year_from, year_to, sort,
+                    open_access_only)
+                if isinstance(result, dict) and not result.get("error"):
+                    try:
+                        _CONTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        tmp = cache_file.with_suffix(".tmp")
+                        tmp.write_text(json.dumps(result), encoding="utf-8")
+                        tmp.replace(cache_file)
+                    except Exception:
+                        pass
         else:
-            result = search_all(query, sources, limit, year_from, year_to,
-                                sort, open_access_only)
+            result = _get_cached_or_execute(
+                "search_papers", search_args,
+                lambda: search_all(query, sources, limit, year_from, year_to,
+                                    sort, open_access_only)
+            )
     except Exception:
         raise
     # S7: skip-moment key recovery — never allowed to affect the call.
@@ -623,8 +785,18 @@ async def get_paper(identifier: str, id_type: str = "auto",
     On an error-shaped result ({"error": ...}) or unexpected notes, read the
     'interpreting-errors' skill (skill_read) before retrying or giving up.
     """
-    result = _get_paper(identifier, id_type, include_references,
-                        include_citations, verify)
+    paper_args = {
+        "identifier": identifier,
+        "id_type": id_type,
+        "include_references": include_references,
+        "include_citations": include_citations,
+        "verify": verify,
+    }
+    result = _get_cached_or_execute(
+        "get_paper", paper_args,
+        lambda: _get_paper(identifier, id_type, include_references,
+                           include_citations, verify)
+    )
     _call_extra("id_type", result.get("id_type"))
     _call_extra("included_refs", include_references)
     _call_extra("included_cites", include_citations)

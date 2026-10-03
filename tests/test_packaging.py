@@ -18,7 +18,7 @@ def test_package_imports():
     import papers_mcp.sources
     import papers_mcp.telemetry
 
-    assert papers_mcp.__version__ == "0.4.6"
+    assert papers_mcp.__version__ == "0.4.7"
     assert hasattr(papers_mcp.server, "search_papers")
     assert hasattr(papers_mcp.sources, "SOURCES")
     assert "arxiv" in papers_mcp.sources.SOURCES
