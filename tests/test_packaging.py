@@ -27,6 +27,9 @@ def test_package_imports():
 
 def test_wheel_archive_contents(tmp_path):
     """Build a wheel with uv and verify zip contents contain sources subpackage."""
+    import shutil
+    if not shutil.which("uv"):
+        pytest.skip("uv not installed in CI runner environment")
     root_dir = Path(__file__).resolve().parents[1]
     res = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
