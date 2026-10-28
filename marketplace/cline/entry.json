@@ -22,7 +22,7 @@
       "find-research-papers-mcp",
       "--",
       "uvx",
-      "find-research-papers-mcp==0.4.8"
+      "find-research-papers-mcp==0.4.9"
     ]
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "find-research-papers-mcp",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "Search open-source research papers across arXiv, OpenAlex, CrossRef, PubMed, and Semantic Scholar",
   "author": {
     "name": "Surendran B",
@@ -10,7 +10,7 @@
     "find-research-papers-mcp": {
       "command": "uvx",
       "args": [
-        "find-research-papers-mcp==0.4.8"
+        "find-research-papers-mcp==0.4.9"
       ]
     }
   }
