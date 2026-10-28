@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.",
-    "version": "0.4.2"
+    "version": "0.4.8"
   },
   "plugins": [
     {

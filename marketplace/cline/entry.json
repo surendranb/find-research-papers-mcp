@@ -1,0 +1,28 @@
+{
+  "id": "find-research-papers-mcp",
+  "type": "mcp",
+  "name": "Find Research Papers",
+  "tagline": "Search 250M+ scholarly papers across arXiv, PubMed, OpenAlex, Crossref, and Semantic Scholar",
+  "description": "Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.",
+  "author": {
+    "name": "Surendran B",
+    "url": "https://github.com/surendranb"
+  },
+  "homepage": "https://papers.builditwithai.xyz",
+  "repo": "https://github.com/surendranb/find-research-papers-mcp",
+  "tags": [
+    "research",
+    "software"
+  ],
+  "license": "MIT",
+  "verified": false,
+  "featured": false,
+  "install": {
+    "args": [
+      "find-research-papers-mcp",
+      "--",
+      "uvx",
+      "find-research-papers-mcp==0.4.8"
+    ]
+  }
+}
