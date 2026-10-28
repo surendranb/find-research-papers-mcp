@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.surendranb/find-research-papers-mcp -->
 # Scientific Research Papers MCP Server 📄
 
 > **Scientific literature grounding MCP server for AI agents: unified search across 250M+ scholarly papers on arXiv, PubMed, OpenAlex, CrossRef, and Semantic Scholar.**
