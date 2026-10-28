@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "find-research-papers-mcp": {
+      "command": "uvx",
+      "args": [
+        "find-research-papers-mcp==0.4.8"
+      ]
+    }
+  }
+}
