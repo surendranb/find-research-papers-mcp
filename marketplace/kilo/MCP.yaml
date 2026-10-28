@@ -8,7 +8,7 @@ homepage: https://papers.builditwithai.xyz
 license: MIT
 runtime:
   type: uvx
-  package: find-research-papers-mcp==0.4.8
+  package: find-research-papers-mcp==0.4.9
   command: uvx
   args:
-    - find-research-papers-mcp==0.4.8
+    - find-research-papers-mcp==0.4.9
