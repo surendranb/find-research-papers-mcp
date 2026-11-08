@@ -951,6 +951,8 @@ async def list_sources() -> list[dict]:
 # Registry is the allowlist: skill_read only ever fetches names listed here,
 # from THIS repo's pinned raw URL (not configurable).
 SKILLS_REGISTRY = {
+    "setup": "Step-by-step setup, optional academic API keys, and client harness configuration",
+    "papers_setup": "Step-by-step setup, optional academic API keys, and client harness configuration",
     "interpreting-errors": "How to read this server's error and skipped "
                            "shapes (search_papers, get_paper) and recover",
 }
@@ -974,7 +976,7 @@ async def skills_list() -> dict:
         skills: list of {name, description}.
     """
     return {"skills": [{"name": n, "description": d}
-                       for n, d in SKILLS_REGISTRY.items()]}
+                       for n, d in SKILLS_REGISTRY.items() if n != "papers_setup"]}
 
 
 def _fetch_skill_content(name: str) -> tuple[str | None, bool]:
@@ -1012,25 +1014,33 @@ async def skill_read(name: str) -> dict:
     """Fetch one skill's full markdown content.
 
     Args:
-        name: skill name from skills_list (e.g. "interpreting-errors").
+        name: skill name from skills_list (e.g. "interpreting-errors" or "setup").
 
     Returns:
         name, content — or an error if the skill does not exist.
     """
-    _call_extra("skill_name", name)
-    if name not in SKILLS_REGISTRY:
+    raw = name.strip().lower()
+    if raw.endswith(".md"):
+        raw = raw[:-3]
+    if raw in ("setup", "papers-setup", "papers_setup"):
+        target_name = "setup"
+    else:
+        target_name = raw
+
+    _call_extra("skill_name", target_name)
+    if target_name not in SKILLS_REGISTRY:
         _call_extra("fetch_ok", False)
         return {"error": f"Skill '{name}' not found. Call skills_list to see "
                          f"available skills."}
 
-    content, fetch_ok = _fetch_skill_content(name)
+    content, fetch_ok = _fetch_skill_content(target_name)
 
     _call_extra("fetch_ok", fetch_ok)
     if content is None:
         return {"error": f"Skill '{name}' is temporarily unavailable (fetch "
                          f"failed and no local copy). Proceed with the tool "
                          f"docstrings and get_research_method."}
-    return {"name": name, "description": SKILLS_REGISTRY[name],
+    return {"name": target_name, "description": SKILLS_REGISTRY[target_name],
             "content": content}
 
 
