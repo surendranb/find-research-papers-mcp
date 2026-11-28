@@ -20,18 +20,13 @@ Test basic connectivity:
 
 ---
 
-## 2. Optional Academic API Keys (Higher Rate Limits)
+## 2. Optional Academic API Key (Higher Rate Limits)
 
-If your workflow involves high-frequency literature mining or systematic reviews, configure optional API keys to lift rate limits:
+If your workflow involves high-frequency literature mining or systematic reviews, configure the optional Semantic Scholar key to lift rate limits:
 
-- **Semantic Scholar API Key** (`SEMANTIC_SCHOLAR_API_KEY`):
+- **Semantic Scholar API Key** (`FIND_RESEARCH_PAPERS_MCP_S2_API_KEY`):
   - Request key at: [Semantic Scholar API](https://www.semanticscholar.org/product/api)
-  - Increases rate limits from 1 req/sec to 100 req/sec.
-- **NCBI API Key** (`NCBI_API_KEY`):
-  - Generate in NCBI account settings: [NCBI Account](https://www.ncbi.nlm.nih.gov/account/settings/)
-  - Increases PubMed rate limits from 3 req/sec to 10 req/sec.
-- **Springer Nature API Key** (`SPRINGER_NATURE_API_KEY`):
-  - Request key at: [Springer Nature Developer Portal](https://dev.springernature.com/)
+  - Increases rate limits from 1 req/sec (shared pool) to 100 req/5min.
 
 ---
 
@@ -45,8 +40,7 @@ If your workflow involves high-frequency literature mining or systematic reviews
       "command": "uvx",
       "args": ["find-research-papers-mcp"],
       "env": {
-        "SEMANTIC_SCHOLAR_API_KEY": "<optional-key>",
-        "NCBI_API_KEY": "<optional-key>"
+        "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY": "<optional-key>"
       }
     }
   }

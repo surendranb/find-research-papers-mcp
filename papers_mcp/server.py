@@ -24,7 +24,6 @@ else:  # pydantic requires typing_extensions.TypedDict on <3.12
     from typing_extensions import TypedDict
 
 import pydantic_core
-from pydantic import BaseModel, Field
 
 import requests
 
@@ -284,7 +283,7 @@ def _brief_version_for(message: str) -> str | None:
 # _CALL_EXTRAS: extra tool_executed props a body wants captured
 # (progress_updates_sent, has_progress_token, brief_version for the relay).
 # _CURRENT_CTX: the injected Context, for bodies that need protocol features
-# (progress notifications, elicitation) without changing their signatures.
+# (progress notifications) without changing their signatures.
 _CALL_EXTRAS: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "papers_call_extras", default=None)
 _CURRENT_CTX: contextvars.ContextVar[Any] = contextvars.ContextVar(
@@ -565,92 +564,28 @@ async def _search_all_with_progress(ctx, query, sources, limit, year_from,
         _call_extra("progress_updates_sent", sent["n"])
 
 
-# --- S7: Semantic Scholar key skip-moment recovery (capability-gated) -------
-class _S2ApiKeyInput(BaseModel):
-    """Elicitation schema: one string field, per-spec primitive-only."""
-
-    api_key: str = Field(
-        description="Semantic Scholar API key (free at "
-                    "https://www.semanticscholar.org/product/api). Used for "
-                    "this session only — never written to disk.")
-
-
-_S2_ELICIT_ASKED = {"done": False}  # ask the human at most once per process
+# --- S7: rate-limit / optional-key guidance (non-eliciting, spec-compliant) ---
+_S2_KEY_GUIDANCE = (
+    "Optional free Semantic Scholar API key lifts shared-pool 429s: request "
+    "one at https://www.semanticscholar.org/product/api, set "
+    "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY in this MCP server's env config, and "
+    "restart your client. Other sources keep working without it."
+)
 
 
-def _client_supports_form_elicitation(ctx) -> bool:
-    """True only when the client declared the form elicitation capability
-    (dual-era: session.client_capabilities covers handshake and 2026 _meta)."""
-    try:
-        caps = ctx.client_capabilities if ctx is not None else None
-        elicitation = getattr(caps, "elicitation", None) if caps else None
-        return elicitation is not None and getattr(elicitation, "form", None) is not None
-    except Exception:
-        return False
-
-
-async def _maybe_elicit_s2_key(ctx, result, query, sources, limit, year_from,
-                               year_to, sort, open_access_only):
-    """At the wall: Semantic Scholar was EXPLICITLY requested but skipped for
-    a key-shaped reason, and the client can elicit — ask the human for the
-    free key, apply it to this process only, retry the search once. Clients
-    without elicitation get today's behavior exactly (skipped + hint).
-    The elicited value is never persisted and never sent to telemetry."""
-    norm_sources = [normalize_source_name(s) for s in sources] if sources else None
-    if not norm_sources or "semanticscholar" not in norm_sources:
-        return result  # only when the user asked for this source by name
+def _apply_s2_rate_limit_hint(result: dict) -> dict:
+    """Attach actionable env-var guidance when Semantic Scholar is skipped for
+    a key-shaped reason (without violating the MCP elicitation secret ban)."""
     if not isinstance(result, dict):
         return result
-    entry = next((s for s in (result.get("skipped") or [])
-                  if s.get("source") == "semanticscholar"), None)
-    if entry is None:
-        return result
-    reason = entry.get("reason")
-    detail = str(entry.get("detail") or "")
-    key_would_help = (reason == "key_required"
-                      or (reason == "error" and "rate limited" in detail))
-    if not key_would_help or semanticscholar._KEY:
-        return result
-    if ctx is None or not _client_supports_form_elicitation(ctx):
-        return result
-    if _S2_ELICIT_ASKED["done"]:
-        return result
-    _S2_ELICIT_ASKED["done"] = True
-
-    flow_props = {"flow_branch": "source_key"}
-    try:
-        res = await ctx.elicit(
-            "Semantic Scholar was skipped: the shared key-free pool is "
-            "rate-limited right now. Paste a free Semantic Scholar API key "
-            "to use it for this session — get one at "
-            "https://www.semanticscholar.org/product/api. The key stays in "
-            "memory only and is never written to disk. To set it "
-            "permanently, add FIND_RESEARCH_PAPERS_MCP_S2_API_KEY to this "
-            "MCP server's environment.",
-            _S2ApiKeyInput,
-        )
-        flow_props["elicit_action"] = res.action
-        if res.action != "accept":
-            flow_props["flow_outcome"] = ("declined" if res.action == "decline"
-                                          else "cancelled")
-            return result
-        key = (res.data.api_key or "").strip()
-        if not key or " " in key or not (10 <= len(key) <= 200):
-            flow_props["flow_outcome"] = "invalid_input"
-            return result
-        semanticscholar.set_session_api_key(key)
-        retried = search_all(query, sources, limit, year_from, year_to, sort,
-                             open_access_only)
-        still_skipped = any(s.get("source") == "semanticscholar"
-                            for s in (retried.get("skipped") or []))
-        flow_props["flow_outcome"] = ("still_failing" if still_skipped
-                                      else "recovered")
-        return retried
-    except Exception:
-        flow_props.setdefault("flow_outcome", "flow_error")
-        return result
-    finally:
-        send_telemetry("setup_flow", flow_props)
+    for entry in (result.get("skipped") or []):
+        if not isinstance(entry, dict) or entry.get("source") != "semanticscholar":
+            continue
+        reason = entry.get("reason")
+        detail = str(entry.get("detail") or "")
+        if reason == "key_required" or (reason == "error" and "rate limited" in detail):
+            entry["hint"] = _S2_KEY_GUIDANCE
+    return result
 
 
 # --- S2: declared result shape for the primary data tool --------------------
@@ -766,13 +701,7 @@ async def search_papers(query: str, sources: list[str] | None = None,
             )
     except Exception:
         raise
-    # S7: skip-moment key recovery — never allowed to affect the call.
-    try:
-        result = await _maybe_elicit_s2_key(
-            ctx, result, query, sources, limit, year_from, year_to, sort,
-            open_access_only)
-    except Exception:
-        pass
+    _apply_s2_rate_limit_hint(result)
     hits = result.get("hits") or []
     _call_extra("hits_count", len(hits))
     _call_extra("sources_used", len(result.get("sources_queried") or []))
