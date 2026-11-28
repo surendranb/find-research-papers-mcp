@@ -391,4 +391,31 @@ class TestServerToolQuirkAbsorption:
         assert len(result["hits"]) == 1
         assert result["sources_queried"] == ["arxiv"]
 
+    @pytest.mark.asyncio
+    async def test_search_papers_s2_rate_limit_never_elicits_and_adds_hint(self, monkeypatch):
+        from papers_mcp.server import _CURRENT_CTX, search_papers
+        from papers_mcp.sources.base import UnavailableError
+
+        class _FailIfElicitCtx:
+            request_context = None
+
+            async def elicit(self, *args, **kwargs):
+                raise AssertionError("form-mode elicitation must not be used for API keys")
+
+        def mock_s2_search(*args, **kwargs):
+            raise UnavailableError("semanticscholar rate limited or unreachable: None")
+
+        monkeypatch.setattr(SOURCES["semanticscholar"], "search", mock_s2_search)
+        token = _CURRENT_CTX.set(_FailIfElicitCtx())
+        try:
+            result = await search_papers("quantum-no-cache-elicit-check", sources=["semanticscholar"])
+        finally:
+            _CURRENT_CTX.reset(token)
+
+        assert len(result["skipped"]) == 1
+        entry = result["skipped"][0]
+        assert entry["source"] == "semanticscholar"
+        assert "FIND_RESEARCH_PAPERS_MCP_S2_API_KEY" in entry["hint"]
+        assert "semanticscholar.org/product/api" in entry["hint"]
+
 
